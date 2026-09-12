@@ -36,6 +36,9 @@ from dotenv import load_dotenv
 from linkage.config import LinkageConfig, Universe, load_universe
 from linkage.detector import WARMUP_OBSERVATIONS, LinkageDetector, Verdict
 from linkage.engine import SpreadHistory, evaluate_linkage
+from linkage.notify import Notifier, TelegramNotifier
+from linkage.notify import build as build_notifier
+from linkage.notify import render
 from linkage.providers.base import MarketDataProvider, ProviderError, Quote
 from linkage.providers.yfinance_provider import YFinanceProvider
 from linkage.store import StateStore
@@ -221,6 +224,7 @@ def scan_once(
     max_age_seconds: float,
     horizon_days: float,
     store: StateStore | None = None,
+    notifier: Notifier | None = None,
 ) -> list[tuple[LinkageConfig, Verdict]]:
     for name, provider in providers.items():
         try:
@@ -262,8 +266,12 @@ def scan_once(
             if previous is None or now - previous >= cooldown:
                 last_alert[linkage.id] = now
                 fired.append((linkage, verdict))
+                # Record BEFORE sending. A delivery failure must not cost the
+                # only durable record that the alert happened.
                 if store is not None:
                     store.record_alert(linkage, verdict)
+                if notifier is not None:
+                    notifier.send(render_alert(linkage, verdict))
 
         # Written every cycle rather than on exit: the process is expected to
         # be killed, not to shut down politely, and state saved only on a clean
@@ -278,17 +286,13 @@ def scan_once(
 
 
 def render_alert(linkage: LinkageConfig, verdict: Verdict) -> str:
-    gate = verdict.gate
-    ou = verdict.ou
-    return (
-        f"\n  ALERT  {linkage.id}  [{linkage.category.value}]\n"
-        f"         kalman z      {verdict.z:+.2f}   beta {verdict.kalman.beta:.4f}\n"
-        f"         percentile    {verdict.threshold.percentile:.2f}\n"
-        f"         half-life     {ou.half_life:.2f}d (t={ou.theta_tstat:.1f})\n"
-        f"         reverts in {gate.expected_reversion_bps:+.1f}bps, "
-        f"friction {linkage.total_friction_bps:.1f}bps, "
-        f"net {gate.net_after_friction_bps:+.1f}bps\n"
-    )
+    """One renderer for every destination.
+
+    The console and the phone get the SAME text. Two renderers means two
+    versions of what an alert said, and the one that gets read is the one
+    nobody checked.
+    """
+    return render(linkage, verdict)
 
 
 def open_store(url: str | None, *, disabled: bool) -> StateStore | None:
@@ -347,6 +351,11 @@ def main() -> None:
     parser.add_argument(
         "--no-db", action="store_true", help="run in memory; forget everything on exit"
     )
+    parser.add_argument(
+        "--verify-telegram",
+        action="store_true",
+        help="check the bot token and send a test message before starting",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -360,6 +369,15 @@ def main() -> None:
     histories: dict[str, SpreadHistory] = {}
     detectors: dict[str, LinkageDetector] = {}
     last_alert: dict[str, datetime] = {}
+
+    load_dotenv(PROJECT_ROOT / ".env")
+    notifier = build_notifier()
+    telegram = TelegramNotifier.from_env()
+    if telegram is None:
+        print("telegram not configured — alerts go to the console only")
+    elif args.verify_telegram:
+        print(f"telegram: {telegram.verify()}")
+    print()
 
     store = open_store(args.db, disabled=args.no_db)
     ready = resume(universe, store, detectors, last_alert) if store else set()
@@ -394,8 +412,9 @@ def main() -> None:
             max_age_seconds=args.max_age,
             horizon_days=args.horizon,
             store=store,
+            notifier=notifier,
         ):
-            print(render_alert(linkage, verdict))
+            pass  # the notifier already printed it
         if args.once:
             return
         time.sleep(interval)
