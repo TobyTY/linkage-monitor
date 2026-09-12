@@ -17,6 +17,10 @@ the arithmetic that shows why.*
 python -m linkage.scan --warmup 500 --interval 60     # watch
 python -m linkage.backtest --pair gold_etf_pair       # score the rule
 python -m linkage.backtest --pair gold_etf_pair --detrend   # was it drift?
+python -m linkage.stat_pairs --fit                    # screen the 50 pairs
+python -m linkage.events --symbol INFY.NS             # event study
+python -m linkage.events --universe                   # who reports soon
+python -m linkage.dashboard --out dashboard.html      # what it knows
 python -m linkage.profile_all                         # profile every pair
 ```
 
@@ -25,10 +29,21 @@ python -m linkage.profile_all                         # profile every pair
 The numbers below came out of this repo, not out of a paper. Several of them
 argue against the project.
 
-**Statistical pairs mostly do not cointegrate, and the ones that do change.**
-Of 50 curated global pairs, 3 cointegrate over a 5-year window, 2 over 2 years,
-4 over 3 years — and the sets barely overlap. Only WTI/Brent and EURUSD/USDCHF
-survive more than one window. Of 16 Indian pairs, 1 cointegrates.
+**Not one of the 50 statistical pairs survives an honest screen.** Judged
+individually at 5%, three qualify: EURUSD/USDCHF, WTI/Brent, RELIANCE/ONGC. But
+fifty simultaneous tests at 5% are *expected* to return two or three false
+positives — measured directly here, this fit calls 3.3% of unrelated random
+walks cointegrated — so three out of fifty is exactly what coin-flipping
+produces. Correcting the family with Benjamini-Hochberg leaves **zero**: the
+smallest p-value is 0.0050 against a rank-1 critical value of 0.00102. The
+generated universe of tradeable statistical pairs is an empty file, and that is
+the honest output rather than a failure to find something.
+
+**Cointegration tested on levels answers a different question than a log hedge
+ratio asks.** The p-value was computed on raw prices while beta was fitted on
+logs, so it described a different spread than the one being traded. The two
+disagree exactly when beta is far from 1 — TATASTEEL/TATAPOWER moves from
+p=0.38 to p=0.005 — which is precisely when the log form was worth using.
 
 **Correlation is not the thing.** The three most correlated Indian pairs —
 NIFTY/BANKNIFTY (+0.87), Bajaj Finance/Bajaj Finserv (+0.79), Adani
@@ -95,6 +110,23 @@ The simulation reproduces the published critical values to within 0.05. The
 check that existed specifically to keep random walks out was letting through
 nearly a third of them. Now 2.86. The gold pair is unaffected (t = −14.5), which
 is itself worth knowing: the result above does not depend on the loose gate.
+
+**The consensus surprise predicts almost nothing about the move after it.**
+R² of 0.031 on INFY (p=0.41) and 0.001 on RELIANCE (p=0.88), measured on 3-day
+abnormal returns net of NIFTY across ~24 events each. That is the expected
+result rather than a broken fit — the estimate is public and the market has
+already priced its own view of it — and it means the original premise, *news
+gives a projected dip or rise*, is mostly untrue for scheduled events.
+
+**And the confidence interval was lying.** Walk-forward, an 80% interval built
+from empirical residual quantiles caught 50% and 36% of held-out outcomes. Two
+causes, both diagnosable: an 80% interval estimated from twelve residuals is
+biased inward, and residual quantiles ignore parameter uncertainty entirely. A
+proper OLS prediction interval lifts measured coverage from 57% to 66% pooled
+across four symbols — better, and still short, because event returns are
+fat-tailed and the samples are small. No formula fixes that, so the nominal
+figure is never shown alone: every projection prints its measured coverage
+beside it and refuses to call itself calibrated until the two agree.
 
 ## The near-miss worth reading
 
@@ -167,6 +199,79 @@ There are no migrations here, unlike the ledger project: every row is either
 disposable state or reconstructible from market data, so the cost of being
 wrong is a re-warm rather than a lost record.
 
+## Statistical pairs
+
+`config/pairs.yaml` holds 50 curated pairs with the mechanism that ties each one
+and the condition that breaks it. `stat_pairs --fit` estimates each relationship
+and compiles the survivors into ordinary linkages —
+
+```yaml
+fair_value: k * b ** beta
+params: {k: 1.0034, beta: 0.9734}
+```
+
+— so from there nothing downstream knows they were ever different. They get
+the same validation, Kalman, threshold, horizon gate, friction and persistence
+as an ADR. Refitting changes the state fingerprint, so stale detector state is
+discarded without anything having to remember to.
+
+A pair must clear five tests, and the last two do the work:
+
+| test | refuses |
+|---|---|
+| 250+ observations | too little history to fit |
+| cointegrated after FDR correction | what chance alone produced |
+| θ separable from zero at the Dickey-Fuller value | a random walk |
+| a 2σ deviation beats friction over the horizon | real relationships too small to trade |
+| the edge is reachable in a survivable number of trades | positive expectancy nobody could ever verify |
+
+The last one reports `trades_to_detect` — how many trades before the mean edge
+is two standard errors from zero. Expected reversion is a drift, and the noise
+it hides under is typically several times larger. A pair needing two thousand
+trades has an edge that is real on paper and unfalsifiable in practice.
+
+Not one of the 50 has `access: full` — none has both legs shortable from a
+Groww account — so every statistical pair here is observational by
+construction.
+
+## Events
+
+`events.py` studies scheduled earnings: consensus surprise against the abnormal
+move over the horizon, net of the listing's index.
+
+Earnings rather than headlines, deliberately. A confidence number is only honest
+if it was measured against outcomes, and measuring needs events that are dated,
+labelled and numerous. Free news feeds give recent headlines with no history, so
+anything trained on them would carry a confidence that was asserted rather than
+observed.
+
+The most useful output is not the projection — it is the **suppression**. An
+earnings date inside the holding horizon is the `breaks_when` clause written
+against nearly every equity pair in the catalogue. A spread that diverges the
+day before results is the relationship being tested, not one about to revert,
+and entering there is the most expensive thing this system could do while
+looking like a perfectly ordinary alert. The scan blocks those and says which
+leg reports when.
+
+## Alerts and the dashboard
+
+Alerts go to the console and to Telegram through one renderer — two would mean
+two versions of what an alert said, and the one that gets read is the one nobody
+checked. Every message carries the whole arithmetic (z, percentile, half-life
+and its t-statistic, expected reversion, friction, net) because the recipient is
+on a phone and cannot open a terminal to check it. Delivery failure never stops
+detection: alerts are written to the database *before* they are sent, and four
+real transport failures plus the HTTP-200-with-`ok:false` case are fired at the
+notifier under test.
+
+`dashboard.py` writes one self-contained HTML file from the database — no
+server, because a dashboard that needs a process running is down exactly when
+someone thinks to look at it. Three of its four panels are about doubt (beta
+drift, config drift, feed coverage). The fourth joins each alert to what the
+spread actually did a horizon later against what the model predicted at the
+time. It is the only panel that can make the system look bad, which is why it
+is there.
+
 ## Config
 
 A linkage is declared, not coded. `config/universe.yaml` holds 15 linkages over
@@ -211,7 +316,7 @@ python -m venv .venv
 .venv/Scripts/python -m pytest
 ```
 
-85 tests. The ones that matter:
+155 tests. The ones that matter:
 
 - `test_persistence.py::test_a_restart_is_invisible_to_the_verdict` — the same
   series through two detectors, one saved and reloaded halfway, demanding an
@@ -225,10 +330,19 @@ python -m venv .venv
   `().__class__.__bases__[0].__subclasses__()`.
 - `test_detectors.py` checks that a random walk is reported as "cannot tell"
   rather than as slow reversion.
+- `test_stat_pairs.py` asserts the false-positive RATE on unrelated random
+  walks rather than the verdict on one draw — a single seed passing or failing
+  is exactly the mistake the multiple-testing correction exists to prevent.
+- `test_dashboard.py` pins the three details that decide whether the outcome
+  column is honest: absolute rather than signed moves, open horizons reported
+  rather than dropped, and no credit for a reversion that happened inside the
+  horizon.
 
 ## Not built yet
 
-News and event scoring (surprise against consensus, event study, calibrated
-confidence); statistical pairs are profiled but not wired into the live scan;
-Telegram delivery; dashboard. The de-trended result needs replicating across the
+Headline and unscheduled-news scoring — the event engine covers scheduled
+events only, and calibrating anything on headlines needs labelled history that
+free feeds do not provide. Intraday data: everything here is daily closes, so
+the half-lives and thresholds describe a daily world while the scanner runs by
+the minute. And the de-trended backtest result needs replicating across the
 other computable linkages before it means anything.
