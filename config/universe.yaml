@@ -31,6 +31,54 @@
 #   4 bps round trip, plus 18% GST = 4.72 bps. Change the assumption and the
 #   friction changes -- which is the capacity question in miniature.
 #
+#
+# RETAIL INR<->USD COST -- why fx_spread is 260 bps and not the 50 that stood
+# here as a placeholder.
+#
+# Priced 13 Sep 2026 at USDINR 95.54 (yfinance USDINR=X, 12 Sep 2026 close),
+# on the same REFERENCE TRADE OF Rs 1,00,000 per leg used everywhere else in
+# this file, ROUND TRIP. Three charges, none of them avoidable:
+#
+#   1. Platform FX markup over interbank. India-facing platforms quote this in
+#      paise per USD -- INDmoney 50-80, Vested 75-100, Interactive Brokers 1-5.
+#      At the INDmoney midpoint of 65 paise:
+#          0.65 / 95.54 = 68.0 bps per conversion -> 136.1 bps round trip.
+#   2. GST on the conversion itself. CGST Rule 32(2) slab: taxable value is 1%
+#      of the amount up to Rs 1 lakh (minimum Rs 250), then Rs 1,000 + 0.5% of
+#      the excess to Rs 10 lakh. On Rs 1,00,000 the value is Rs 1,000, taxed at
+#      18% = Rs 180 = 18.0 bps per conversion -> 36.0 bps round trip.
+#   3. Outward remittance / SWIFT fee, Rs 500-1,000 plus 18% GST. Midpoint
+#      Rs 750 x 1.18 = Rs 885 = 88.5 bps. Charged on the outward leg only. The
+#      inward repatriation carries its own correspondent-bank cut, which is NOT
+#      counted here -- so 260 is a floor, not a central estimate.
+#
+#      136.1 + 36.0 + 88.5 = 260.6 -> 260 bps.
+#
+# SIZE DEPENDENCE is the capacity question again. Charges 2 and 3 are flat, so
+# the number moves hard with ticket size:
+#       Rs   50,000 -> ~432 bps          Rs  5,00,000 -> ~171 bps
+#       Rs 1,00,000 -> ~260 bps          Rs 25,00,000 -> ~146 bps
+# Swapping INDmoney's markup for Interactive Brokers' 1-5 paise drops term 1
+# from 136 to ~6 bps, giving ~131 bps at the Rs 1,00,000 reference.
+#
+# TCS IS DELIBERATELY EXCLUDED. Investment remittances under LRS attract 20%
+# TCS above a cumulative Rs 10 lakh per tax year (Budget 2026 cut education,
+# medical and tour remittances to 2%; investment was not cut). TCS is
+# creditable against income tax, so it is a cash-flow cost and not a spread.
+# Adding it to a bps friction number would be charging a refund as an expense.
+# It constrains sizing, not whether a gap is real.
+#
+# THE MARKUP FIGURES ARE PUBLISHED RATES, NOT MEASURED ONES. They come from
+# platform disclosures and third-party comparisons, some of them vendor-run.
+# The first real conversion statement should replace term 1 with an observed
+# number, and this block should record it.
+#
+# NONE OF THIS MAKES THE ADR PAIRS TRADEABLE. Groww withdrew its US-stocks
+# offering entirely -- no new investment after 27 Feb 2024, withdrawals closed
+# 30 Jun 2024 -- and converting an ADR into the local share needs the
+# depositary regardless of broker. These six linkages stay `observational`.
+# The number exists so the net-edge column is honest about what a gap would
+# have to clear, not because the trade is available.
 # CONVERSION CONSTANTS. Fit them with `python -m linkage.calibrate --all`.
 # A constant 3% stale produces a permanent 3% "spread" that never reverts and
 # looks exactly like a standing arbitrage.
@@ -65,7 +113,9 @@ _nse_plus_fx: &nse_plus_fx
   sebi_turnover: 0.02
   brokerage: 4.0
   gst: 0.83
-  fx_spread: 50           # ← YOURS: retail INR<->USD. Dominates these pairs.
+  fx_spread: 260          # Retail INR<->USD, round trip, Rs 1,00,000 ticket.
+                          # Dominates these pairs. Arithmetic in the
+                          # RETAIL INR<->USD COST note above.
 
 linkages:
 
