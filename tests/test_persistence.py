@@ -347,3 +347,48 @@ def test_a_detector_past_warmup_is_not_replayed_again(store):
 
     ready = resume(Universe(linkages=[cfg]), store, {}, {})
     assert ready == {"adr"}
+
+
+# ---------------------------------------------------------------------------
+# Resuming, as the scanner does it
+# ---------------------------------------------------------------------------
+
+
+def test_a_detector_that_learned_nothing_does_not_count_as_ready(store):
+    """The bug the first live run found, kept fixed.
+
+    That run happened on a closed market. Every quote was stale, so every
+    detector learned nothing -- and a row was written anyway. The next run read
+    "a row exists" as "already warm" and skipped the history replay, printing
+    fifteen lines saying everything had resumed. Left alone it would have
+    suppressed its own warmup forever, silently, while looking healthy.
+
+    So readiness is a question about the detector, not about the row.
+    """
+    from linkage.config import Universe
+    from linkage.scan import resume
+
+    cfg = linkage()
+    universe = Universe(linkages=[cfg])
+
+    empty = LinkageDetector(cfg.id)
+    store.save(cfg, empty)
+
+    detectors: dict[str, LinkageDetector] = {}
+    ready = resume(universe, store, detectors, {})
+
+    assert cfg.id in detectors      # the state is still loaded
+    assert cfg.id not in ready      # but it is not a reason to skip the warmup
+
+
+def test_a_detector_past_warmup_counts_as_ready(store):
+    from linkage.config import Universe
+    from linkage.scan import resume
+
+    cfg = linkage()
+    det = LinkageDetector(cfg.id)
+    for i, v in enumerate(series(WARMUP_OBSERVATIONS + 10)):
+        det.observe(obs(v, day=i), cfg)
+    store.save(cfg, det)
+
+    assert cfg.id in resume(Universe(linkages=[cfg]), store, {}, {})

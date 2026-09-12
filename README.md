@@ -16,6 +16,7 @@ the arithmetic that shows why.*
 ```
 python -m linkage.scan --warmup 500 --interval 60     # watch
 python -m linkage.backtest --pair gold_etf_pair       # score the rule
+python -m linkage.backtest --pair gold_etf_pair --detrend   # was it drift?
 python -m linkage.profile_all                         # profile every pair
 ```
 
@@ -45,11 +46,55 @@ on the gold ETF pair: **+13.59 bps** edge over the baseline of entering on every
 eligible day, **−13.45 bps** after friction. That verdict — "beats baseline,
 loses to friction" — is the honest headline.
 
-**Open question.** In that backtest, 9 of 9 negative-z alerts were profitable
-and 0 of 6 positive-z ones were. Perfect separation at n = 15 is a warning, not
-a finding: the GOLDBEES/SETFGOLD ratio slid 0.974 → 0.969 over five years on an
-expense-ratio differential, so the "edge" may be drift rather than reversion.
-Unresolved; the de-trended re-run is the next thing to do.
+**That verdict was the drift, not the pair.** The same backtest fired 8 of 9
+profitable alerts below the mean and 0 of 6 above it. Separation that clean at
+n = 15 is a warning rather than a finding — the GOLDBEES/SETFGOLD ratio slid
+0.974 → 0.969 over five years on an expense-ratio differential, so the rule was
+plausibly booking a trend as if it were reversion. Removing a **causal** rolling
+trend (`--detrend`) and re-running over identical days:
+
+| | plain | de-trended |
+|---|---|---|
+| alerts | 15 | 13 |
+| edge over baseline | +13.59 bps | **+41.72 bps** |
+| net of friction | −13.45 bps | **+14.80 bps** |
+| direction | 8/9 below, **0/6 above** | 5/6 below, 6/7 above |
+
+The asymmetry disappears, which is what a drift explanation predicts and a
+reversion explanation does not.
+
+**Believe that only as far as the null test allows.** Subtracting a locally
+fitted trend induces negative autocorrelation in what remains — the residual is
+pulled toward a line fitted to its own recent past — which is how the
+Hodrick-Prescott filter invents business cycles in data that has none. So the
+same pipeline was pointed at series whose answer is known before it runs:
+random walks, drifting random walks, and a true OU process. De-trending a random
+walk produces no edge, and the reverting control is still found
+(`tests/test_backtest_null.py`). The filter is not manufacturing the result.
+
+**What that still does not establish.** One pair, n = 13, and a de-trend window
+of 250 days that was chosen rather than searched. This is a hypothesis that
+survived its first real attempt to kill it, not an edge.
+
+**The reversion test was admitting 29% of random walks.** `MIN_THETA_TSTAT` was
+2.0, which is what a t-table gives for 5% significance. But the fit — the change
+in the spread regressed on its own lagged level, with a constant — *is* the
+Dickey-Fuller regression, and under the null of a random walk its t-statistic
+does not follow Student's t. It follows the Dickey-Fuller τ_μ distribution,
+which sits well to the left. Measured over 3000 simulated random walks per
+length:
+
+| cut-off | admitted as "reverting" |
+|---|---|
+| 2.00 | 29% |
+| 2.57 | 10% |
+| **2.86** | **5%** |
+| 3.43 | 1% |
+
+The simulation reproduces the published critical values to within 0.05. The
+check that existed specifically to keep random walks out was letting through
+nearly a third of them. Now 2.86. The gold pair is unaffected (t = −14.5), which
+is itself worth knowing: the result above does not depend on the loose gate.
 
 ## The near-miss worth reading
 
@@ -166,12 +211,15 @@ python -m venv .venv
 .venv/Scripts/python -m pytest
 ```
 
-78 tests. The ones that matter:
+85 tests. The ones that matter:
 
 - `test_persistence.py::test_a_restart_is_invisible_to_the_verdict` — the same
   series through two detectors, one saved and reloaded halfway, demanding an
   identical verdict. A field left out of `snapshot()` shows up here as a
   divergence rather than as a quiet production bug.
+- `test_backtest_null.py` runs the whole scoring pipeline on series whose
+  answer is known in advance — random walks, drifting random walks, a true OU
+  process. Without it, "+13 bps of edge" has no scale to be read against.
 - `test_formula.py` fires eight real sandbox escapes at the expression
   evaluator, including `__import__('os').system(...)` and
   `().__class__.__bases__[0].__subclasses__()`.
@@ -182,4 +230,5 @@ python -m venv .venv
 
 News and event scoring (surprise against consensus, event study, calibrated
 confidence); statistical pairs are profiled but not wired into the live scan;
-Telegram delivery; dashboard.
+Telegram delivery; dashboard. The de-trended result needs replicating across the
+other computable linkages before it means anything.

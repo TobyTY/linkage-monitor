@@ -32,7 +32,29 @@ import numpy as np
 
 
 #: |t| on the AR(1) coefficient below which theta is indistinguishable from zero.
-MIN_THETA_TSTAT = 2.0
+#:
+#: This is 2.86, not the 2.0 a t-table suggests, and the difference is the whole
+#: point. The regression below -- the change in the spread on its own lagged
+#: level, with a constant -- IS the Dickey-Fuller regression, and under the null
+#: of a random walk its t-statistic does not follow Student's t. It follows the
+#: Dickey-Fuller tau_mu distribution, which sits well to the left, so a t-table
+#: cut-off is far more permissive than it appears to be.
+#:
+#: Measured directly, on 3000 pure random walks per length (see
+#: `tests/test_backtest_null.py`):
+#:
+#:     cut-off    admitted as "reverting"
+#:      2.00              29%
+#:      2.57              10%
+#:      2.86               5%
+#:      3.43               1%
+#:
+#: The value was 2.0 here, which meant that nearly a third of series with no
+#: mean reversion whatsoever passed the check that exists to exclude them --
+#: while the docstring below claimed the check was there to stop exactly that.
+#: 2.86 is the conventional 5% critical value and the simulation agrees with it
+#: to within 0.05.
+MIN_THETA_TSTAT = 2.86
 
 
 @dataclass(frozen=True)
