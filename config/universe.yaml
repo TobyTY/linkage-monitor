@@ -1,49 +1,57 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# STARTER UNIVERSE — every number below is UNVERIFIED and must be replaced.
+# UNIVERSE
 #
-# This file exists so the pipeline runs end to end. It is not a research
-# artefact yet, and no alert it produces means anything until two things happen:
+# Friction below is in basis points of turnover, ROUND TRIP, and every line is
+# sourced. Two inputs are still yours to supply:
 #
-#   1. FRICTION. Every `friction_bps` value here is a placeholder. Real numbers
-#      come from a broker contract note and the exchange schedules -- STT, stamp
-#      duty, GST on brokerage, exchange transaction charges, SEBI turnover fees,
-#      the actual FX spread your bank quotes, and ADR conversion fees. Guessed
-#      friction makes every "net edge" fiction, and it is the first thing a
-#      reviewer will probe.
+#   * `brokerage` assumes ₹0 equity delivery (Zerodha, Groww, Angel One and most
+#     discount brokers). Replace if yours charges.
+#   * `fx_spread` is the retail INR↔USD spread you can actually get. It dominates
+#     every other cost on the ADR linkages and it varies enormously by channel.
 #
-#   2. CONVERSION CONSTANTS. `adr_ratio` and `units_per_gram` are asserted here.
-#      They should be ESTIMATED FROM DATA instead: regress the reference leg on
-#      the fair value over history and read the ratio off the fit. An asserted
-#      constant that is 2% wrong produces a permanent 2% "divergence" that looks
-#      exactly like a standing arbitrage and is nothing of the kind.
+# NSE equity delivery, per side unless noted (sources in README):
+#   STT                    0.1%      = 10 bps   (both sides, delivery)
+#   Stamp duty             0.015%    = 1.5 bps  (BUY side only)
+#   Exchange txn charge    ₹2.97/lakh= 0.297 bps
+#   SEBI turnover fee      0.0001%   = 0.01 bps
+#   GST                    18% on (brokerage + txn + SEBI)
+#   → round trip, zero brokerage ≈ 22.2 bps
 #
-# Symbols are Yahoo Finance format, because that is the provider that runs
-# in-process. A different provider gets different symbols for the same legs --
-# which is why symbols live per-leg rather than per-linkage.
+# STILL ASSERTED, SHOULD BE ESTIMATED: `units_per_gram` on the gold linkage.
+# A constant that is 2% wrong manufactures a permanent 2% "divergence" that
+# looks exactly like a standing arbitrage and is nothing of the kind. Fit it
+# against history instead of asserting it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 linkages:
 
+  # ── OBSERVATIONAL, NOT TRADEABLE ──────────────────────────────────────────
+  # An Indian retail investor cannot convert between an ADR and the local share:
+  # that requires the depositary and a broker with the permissions, and outward
+  # remittance sits under LRS with TCS on top. So the "net edge" on these two is
+  # NOT a profit estimate. It is a measure of whether the relationship is
+  # holding. Treat a breach as information about the market, not an instruction.
+
   - id: infy_adr
     description: >
-      Infosys NYSE ADR against the NSE listing, converted at spot USDINR.
-      The two are fungible in principle, so the gap should be FX plus the cost
-      of conversion. Persistent deviation is usually the conversion cost, not
-      an opportunity.
+      Infosys NYSE ADR against the NSE listing at spot USDINR. ADR ratio 1:1,
+      confirmed against Infosys investor FAQ and the FY2026 Form 20-F.
     legs:
       local: { symbol: "INFY.NS",   provider: yfinance }
       adr:   { symbol: "INFY",      provider: yfinance }
       fx:    { symbol: "USDINR=X",  provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
     params:
-      adr_ratio: 1          # UNVERIFIED — confirm against the depositary
+      adr_ratio: 1            # CONFIRMED: 1 ordinary share per ADS
     reference: local
-    friction_bps:           # ALL PLACEHOLDER
-      fx_spread: 25
-      brokerage: 3
-      stt: 10
-      stamp_duty: 1.5
-      adr_conversion: 5
+    friction_bps:
+      stt: 20                 # 0.1% both sides, delivery
+      stamp_duty: 1.5         # buy side only
+      exchange_txn: 0.6       # ₹2.97/lakh × 2
+      sebi_turnover: 0.02
+      gst: 0.11               # 18% on txn + SEBI, zero brokerage
+      brokerage: 0            # ← YOURS: ₹0 at discount brokers
+      fx_spread: 50           # ← YOURS: retail INR↔USD, dominates everything
     alert:
       warn_z: 1.8
       alert_z: 2.5
@@ -52,49 +60,58 @@ linkages:
 
   - id: icici_adr
     description: >
-      ICICI Bank NYSE ADR against the NSE listing. Same mechanism as Infosys,
-      different ADR ratio — which is exactly the constant most likely to be
-      wrong and most likely to manufacture a fake standing gap.
+      ICICI Bank NYSE ADR against the NSE listing. ADR ratio 2:1, confirmed
+      against the Form 20-F listing history.
     legs:
       local: { symbol: "ICICIBANK.NS", provider: yfinance }
       adr:   { symbol: "IBN",          provider: yfinance }
       fx:    { symbol: "USDINR=X",     provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
     params:
-      adr_ratio: 2          # UNVERIFIED
+      adr_ratio: 2            # CONFIRMED: 2 ordinary shares per ADS
     reference: local
-    friction_bps:           # ALL PLACEHOLDER
-      fx_spread: 25
-      brokerage: 3
-      stt: 10
+    friction_bps:
+      stt: 20
       stamp_duty: 1.5
-      adr_conversion: 5
+      exchange_txn: 0.6
+      sebi_turnover: 0.02
+      gst: 0.11
+      brokerage: 0            # ← YOURS
+      fx_spread: 50           # ← YOURS
     alert:
       warn_z: 1.8
       alert_z: 2.5
       min_net_edge_bps: 15
       cooldown_minutes: 60
 
+  # ── ACTUALLY TRADEABLE ────────────────────────────────────────────────────
+  # Both legs of the decision are reachable from an Indian demat account: the
+  # ETF trades on NSE. This is the linkage where "net edge" means what it says.
+
   - id: goldbees
     description: >
       Nippon India Gold ETF on NSE against COMEX gold converted to INR. The
-      standing gap is real and fully explained: import duty, GST, the ETF's
-      expense ratio and its tracking error. A useful first test of whether the
-      friction ledger can account for a gap it knows the cause of.
+      standing gap is real and largely explained by import duty and GST. Note
+      the ETF's ~0.14% annual expense ratio is a HOLDING cost embedded in the
+      price, not a per-trade cost — it belongs in the fair value as a drag, not
+      in friction. Left out of both until estimated properly.
     legs:
       etf:  { symbol: "GOLDBEES.NS", provider: yfinance }
       spot: { symbol: "GC=F",        provider: yfinance }
       fx:   { symbol: "USDINR=X",    provider: yfinance }
     fair_value: "spot * fx / 31.1035 * units_per_gram * (1 + import_duty) * (1 + gst)"
     params:
-      units_per_gram: 0.01   # UNVERIFIED — estimate from data, do not assert
-      import_duty: 0.06      # UNVERIFIED — check the current customs rate
-      gst: 0.03              # UNVERIFIED
+      units_per_gram: 0.01    # ASSERTED — fit this against history instead
+      import_duty: 0.06       # verify against the current customs notification
+      gst: 0.03
     reference: etf
-    friction_bps:            # ALL PLACEHOLDER
-      brokerage: 3
-      stt: 10
-      expense_ratio: 50
+    friction_bps:
+      stt: 20
+      stamp_duty: 1.5
+      exchange_txn: 0.6
+      sebi_turnover: 0.02
+      gst_on_charges: 0.11
+      brokerage: 0            # ← YOURS
     alert:
       warn_z: 2.0
       alert_z: 3.0
