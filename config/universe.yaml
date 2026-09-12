@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# STARTER UNIVERSE — every number below is UNVERIFIED and must be replaced.
+#
+# This file exists so the pipeline runs end to end. It is not a research
+# artefact yet, and no alert it produces means anything until two things happen:
+#
+#   1. FRICTION. Every `friction_bps` value here is a placeholder. Real numbers
+#      come from a broker contract note and the exchange schedules -- STT, stamp
+#      duty, GST on brokerage, exchange transaction charges, SEBI turnover fees,
+#      the actual FX spread your bank quotes, and ADR conversion fees. Guessed
+#      friction makes every "net edge" fiction, and it is the first thing a
+#      reviewer will probe.
+#
+#   2. CONVERSION CONSTANTS. `adr_ratio` and `units_per_gram` are asserted here.
+#      They should be ESTIMATED FROM DATA instead: regress the reference leg on
+#      the fair value over history and read the ratio off the fit. An asserted
+#      constant that is 2% wrong produces a permanent 2% "divergence" that looks
+#      exactly like a standing arbitrage and is nothing of the kind.
+#
+# Symbols are Yahoo Finance format, because that is the provider that runs
+# in-process. A different provider gets different symbols for the same legs --
+# which is why symbols live per-leg rather than per-linkage.
+# ─────────────────────────────────────────────────────────────────────────────
+
+linkages:
+
+  - id: infy_adr
+    description: >
+      Infosys NYSE ADR against the NSE listing, converted at spot USDINR.
+      The two are fungible in principle, so the gap should be FX plus the cost
+      of conversion. Persistent deviation is usually the conversion cost, not
+      an opportunity.
+    legs:
+      local: { symbol: "INFY.NS",   provider: yfinance }
+      adr:   { symbol: "INFY",      provider: yfinance }
+      fx:    { symbol: "USDINR=X",  provider: yfinance }
+    fair_value: "adr * fx / adr_ratio"
+    params:
+      adr_ratio: 1          # UNVERIFIED — confirm against the depositary
+    reference: local
+    friction_bps:           # ALL PLACEHOLDER
+      fx_spread: 25
+      brokerage: 3
+      stt: 10
+      stamp_duty: 1.5
+      adr_conversion: 5
+    alert:
+      warn_z: 1.8
+      alert_z: 2.5
+      min_net_edge_bps: 15
+      cooldown_minutes: 60
+
+  - id: icici_adr
+    description: >
+      ICICI Bank NYSE ADR against the NSE listing. Same mechanism as Infosys,
+      different ADR ratio — which is exactly the constant most likely to be
+      wrong and most likely to manufacture a fake standing gap.
+    legs:
+      local: { symbol: "ICICIBANK.NS", provider: yfinance }
+      adr:   { symbol: "IBN",          provider: yfinance }
+      fx:    { symbol: "USDINR=X",     provider: yfinance }
+    fair_value: "adr * fx / adr_ratio"
+    params:
+      adr_ratio: 2          # UNVERIFIED
+    reference: local
+    friction_bps:           # ALL PLACEHOLDER
+      fx_spread: 25
+      brokerage: 3
+      stt: 10
+      stamp_duty: 1.5
+      adr_conversion: 5
+    alert:
+      warn_z: 1.8
+      alert_z: 2.5
+      min_net_edge_bps: 15
+      cooldown_minutes: 60
+
+  - id: goldbees
+    description: >
+      Nippon India Gold ETF on NSE against COMEX gold converted to INR. The
+      standing gap is real and fully explained: import duty, GST, the ETF's
+      expense ratio and its tracking error. A useful first test of whether the
+      friction ledger can account for a gap it knows the cause of.
+    legs:
+      etf:  { symbol: "GOLDBEES.NS", provider: yfinance }
+      spot: { symbol: "GC=F",        provider: yfinance }
+      fx:   { symbol: "USDINR=X",    provider: yfinance }
+    fair_value: "spot * fx / 31.1035 * units_per_gram * (1 + import_duty) * (1 + gst)"
+    params:
+      units_per_gram: 0.01   # UNVERIFIED — estimate from data, do not assert
+      import_duty: 0.06      # UNVERIFIED — check the current customs rate
+      gst: 0.03              # UNVERIFIED
+    reference: etf
+    friction_bps:            # ALL PLACEHOLDER
+      brokerage: 3
+      stt: 10
+      expense_ratio: 50
+    alert:
+      warn_z: 2.0
+      alert_z: 3.0
+      min_net_edge_bps: 25
+      cooldown_minutes: 120
