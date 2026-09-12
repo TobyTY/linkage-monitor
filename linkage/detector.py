@@ -37,9 +37,18 @@ from linkage.thresholds import EmpiricalThreshold, ThresholdReading
 #: being ignorant, the threshold needs a distribution, the OU fit needs a window.
 WARMUP_OBSERVATIONS = 120
 
+#: Shape of the persisted snapshot. Bumped whenever a field is added, removed
+#: or reinterpreted, so that a restore across an upgrade refuses rather than
+#: quietly loading a state that means something else now.
+STATE_VERSION = 1
+
 #: Trailing window the OU process is refitted on. Never the full history: a
 #: half-life fitted on data that includes the future is not a half-life.
 OU_WINDOW = 250
+
+
+class StateVersionMismatch(Exception):
+    """A stored snapshot was written by a build that meant something else."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +59,13 @@ class Verdict:
     ts: datetime
     should_alert: bool
     reason: str
+
+    #: The deviation this verdict is about, in basis points. Carried on the
+    #: verdict rather than left on the observation because everything that
+    #: consumes a verdict -- the renderer, the notifier, the alerts table --
+    #: needs the number the decision was made on, and reaching back for it is
+    #: how the logged number drifts from the decided number.
+    spread_bps: float | None = None
 
     kalman: KalmanStep | None = None
     threshold: ThresholdReading | None = None
@@ -119,12 +135,18 @@ class LinkageDetector:
                 observation.ts,
                 False,
                 f"warming up ({self.seen}/{WARMUP_OBSERVATIONS})",
+                spread_bps=spread_bps,
                 kalman=step,
             )
 
         if reading is None:
             return Verdict(
-                self.linkage_id, observation.ts, False, "no distribution yet", kalman=step
+                self.linkage_id,
+                observation.ts,
+                False,
+                "no distribution yet",
+                spread_bps=spread_bps,
+                kalman=step,
             )
 
         # Gate 1 -- is this deviation unusual against what this linkage actually
@@ -135,6 +157,7 @@ class LinkageDetector:
                 observation.ts,
                 False,
                 f"{reading.percentile:.1f}th percentile, below alert threshold",
+                spread_bps=spread_bps,
                 kalman=step,
                 threshold=reading,
             )
@@ -148,6 +171,7 @@ class LinkageDetector:
                 observation.ts,
                 False,
                 "insufficient history to fit reversion",
+                spread_bps=spread_bps,
                 kalman=step,
                 threshold=reading,
             )
@@ -156,7 +180,12 @@ class LinkageDetector:
             fit = fit_ou(window)
         except ValueError as exc:
             return Verdict(
-                self.linkage_id, observation.ts, False, str(exc), kalman=step,
+                self.linkage_id,
+                observation.ts,
+                False,
+                str(exc),
+                spread_bps=spread_bps,
+                kalman=step,
                 threshold=reading,
             )
 
@@ -174,6 +203,7 @@ class LinkageDetector:
             observation.ts,
             gate.passed,
             gate.reason,
+            spread_bps=spread_bps,
             kalman=step,
             threshold=reading,
             gate=gate,
@@ -184,3 +214,37 @@ class LinkageDetector:
         """Replay history so the detector is ready at startup, not in a week."""
         for observation in observations:
             self.observe(observation, linkage)
+
+    # ---- persistence -------------------------------------------------------
+    #
+    # Everything mutated by `observe` appears here, and nothing else. The test
+    # that keeps it honest does not compare dictionaries: it splits a series in
+    # two, runs one detector straight through and another through a save and a
+    # reload, and asserts the two verdicts are identical. A field forgotten here
+    # shows up there as a divergence, which is what the omission would actually
+    # cost in production.
+
+    def snapshot(self) -> dict:
+        return {
+            "version": STATE_VERSION,
+            "linkage_id": self.linkage_id,
+            "seen": self.seen,
+            "kalman": self.kalman.snapshot(),
+            "threshold": self.threshold.snapshot(),
+            "spread_history": list(self.spread_history),
+        }
+
+    @classmethod
+    def restore(cls, snapshot: dict) -> LinkageDetector:
+        version = snapshot.get("version")
+        if version != STATE_VERSION:
+            raise StateVersionMismatch(
+                f"snapshot is version {version}, this build reads {STATE_VERSION}"
+            )
+        return cls(
+            linkage_id=snapshot["linkage_id"],
+            kalman=KalmanHedge.restore(snapshot["kalman"]),
+            threshold=EmpiricalThreshold.restore(snapshot["threshold"]),
+            spread_history=[float(v) for v in snapshot["spread_history"]],
+            seen=int(snapshot["seen"]),
+        )

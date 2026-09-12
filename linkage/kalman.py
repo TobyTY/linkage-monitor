@@ -119,3 +119,28 @@ class KalmanHedge:
         """
         for y, x in zip(ys, xs):
             self.update(y, x)
+
+    # ---- persistence -------------------------------------------------------
+    #
+    # The filter's whole value is that it has been running. A process restart
+    # that throws away `state` and `P` does not lose a cache -- it loses the
+    # only thing that distinguishes this filter from a fresh one, and the
+    # detector goes back to reporting its own ignorance for a hundred cycles.
+
+    def snapshot(self) -> dict:
+        """Everything needed to resume this exact filter."""
+        return {
+            "delta": self.delta,
+            "observation_var": self.R,
+            "state": self.state.tolist(),
+            "P": self.P.tolist(),
+            "steps": self.steps,
+        }
+
+    @classmethod
+    def restore(cls, snapshot: dict) -> KalmanHedge:
+        filt = cls(delta=snapshot["delta"], observation_var=snapshot["observation_var"])
+        filt.state = np.array(snapshot["state"], dtype=float)
+        filt.P = np.array(snapshot["P"], dtype=float)
+        filt.steps = int(snapshot["steps"])
+        return filt

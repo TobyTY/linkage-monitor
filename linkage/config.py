@@ -13,6 +13,8 @@ time, once, quietly, for one pair, and the alert simply never fires.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -112,6 +114,38 @@ class LinkageConfig(BaseModel):
     @property
     def total_friction_bps(self) -> float:
         return sum(self.friction_bps.values())
+
+    @property
+    def state_fingerprint(self) -> str:
+        """Identity of the QUANTITY this linkage measures.
+
+        Persisted detector state is only meaningful against the config that
+        produced it. A Kalman state and a percentile window accumulated under
+        `spot * usdinr / 10` describe a different number than the same fields
+        under `spot * usdinr / 12`, and silently resuming across that edit
+        produces a detector that is confidently wrong -- worse than one that
+        is honestly ignorant, because it does not look like it is warming up.
+
+        So this covers exactly the fields that change what the stored numbers
+        MEAN: the legs, the formula, its parameters, and which leg is the
+        reference. Deliberately excluded are friction and the alert thresholds:
+        those are applied fresh to every verdict and accumulate in nothing, so
+        retuning them must not throw away a month of history.
+        """
+        canonical = json.dumps(
+            {
+                "legs": {
+                    name: [leg.symbol, leg.provider]
+                    for name, leg in sorted(self.legs.items())
+                },
+                "fair_value": self.fair_value,
+                "params": dict(sorted(self.params.items())),
+                "reference": self.reference,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 class Universe(BaseModel):

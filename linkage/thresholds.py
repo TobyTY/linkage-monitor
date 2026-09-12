@@ -111,3 +111,28 @@ class EmpiricalThreshold:
             return (0.0, NORMAL_3SIGMA_RATE)
         z = np.abs((history - history.mean()) / sd)
         return (float((z > 3).mean()), NORMAL_3SIGMA_RATE)
+
+    # ---- persistence -------------------------------------------------------
+
+    def snapshot(self) -> dict:
+        """The window itself, because the distribution IS the state.
+
+        There is no summary that would do: the thresholds are percentiles, and
+        a percentile cannot be reconstructed from a mean and a variance.
+        """
+        return {
+            "window": self.window,
+            "warn_percentile": self.warn_percentile,
+            "alert_percentile": self.alert_percentile,
+            "values": list(self._values),
+        }
+
+    @classmethod
+    def restore(cls, snapshot: dict) -> EmpiricalThreshold:
+        threshold = cls(
+            window=snapshot["window"],
+            warn_percentile=snapshot["warn_percentile"],
+            alert_percentile=snapshot["alert_percentile"],
+        )
+        threshold._values.extend(float(v) for v in snapshot["values"])
+        return threshold
