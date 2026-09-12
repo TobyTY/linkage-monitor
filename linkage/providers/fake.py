@@ -54,6 +54,9 @@ class FakeProvider:
 
     # -- provider interface ----------------------------------------------
 
+    def prefetch(self, symbols) -> None:
+        """No-op: prices are set directly by the test."""
+
     def quote(self, symbol: str) -> Quote:
         self.quote_calls.append(symbol)
         if symbol in self._unreachable:

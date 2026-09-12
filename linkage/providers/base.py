@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Protocol, runtime_checkable
+from typing import Iterable, Protocol, runtime_checkable
 
 
 class ProviderError(RuntimeError):
@@ -67,6 +67,17 @@ class MarketDataProvider(Protocol):
 
         Honesty matters more than the number. A provider that claims 1 and
         delivers 60 produces a system that silently alerts on stale data.
+        """
+        ...
+
+    def prefetch(self, symbols: Iterable[str]) -> None:
+        """Warm a whole cycle's symbols in as few round trips as possible.
+
+        Providers that can batch should; providers that cannot may no-op. The
+        collector always calls this before quoting, so a batching provider sees
+        one request per cycle rather than one per leg -- which for a universe
+        where USDINR appears in nearly every linkage is most of the difference
+        between fitting inside the cadence floor and not.
         """
         ...
 
