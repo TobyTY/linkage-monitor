@@ -31,12 +31,23 @@
 #   4 bps round trip, plus 18% GST = 4.72 bps. Change the assumption and the
 #   friction changes -- which is the capacity question in miniature.
 #
-# CONVERSION CONSTANTS are asserted here as starting points ONLY. Fit them with
-#   python -m linkage.calibrate --all
+# CONVERSION CONSTANTS. Fit them with `python -m linkage.calibrate --all`.
 # A constant 3% stale produces a permanent 3% "spread" that never reverts and
-# looks exactly like a standing arbitrage. Observed closes already suggest the
-# WIPRO and DRREDDY ratios are wrong (their gaps sit opposite in sign to INFY
-# and ICICI, which an FX or timing story cannot explain).
+# looks exactly like a standing arbitrage.
+#
+# BUT THE FIT IS NOT ALWAYS THE BETTER NUMBER. Fitting on daily closes assumes
+# both legs are struck at the same moment. For same-session pairs -- two NSE
+# ETFs, an ETF against its index -- that holds, and the fitted value wins.
+#
+# For CROSS-SESSION pairs it does not. NSE closes at 10:00 UTC, NYSE at 21:00
+# UTC, so every daily observation of an ADR pair contains eleven hours of
+# overnight move. Fit a ratio on that and the AVERAGE overnight drift gets baked
+# into the constant. INFY and ICICI are the proof: both ratios are confirmed in
+# the companies' own 20-F filings (1:1 and 2:1), and substituting the fitted
+# values made their spreads WORSE -- -192 to -321 bps, and -179 to -243 bps.
+#
+# So: use the filing where one exists, the fit only where it does not, and treat
+# every ADR fit as carrying a timing bias it cannot see.
 # ─────────────────────────────────────────────────────────────────────────────
 
 _nse_delivery_friction: &nse_delivery
@@ -130,7 +141,8 @@ linkages:
       adr:   { symbol: "INFY",     provider: yfinance }
       fx:    { symbol: "USDINR=X", provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params: { adr_ratio: 1 }        # CONFIRMED
+    params: { adr_ratio: 1 }        # CONFIRMED in the 20-F. Do NOT replace with
+                                    # the fitted 0.9875 -- see the cross-session note above.
     reference: local
     friction_bps: *nse_plus_fx
     alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
@@ -143,7 +155,8 @@ linkages:
       adr:   { symbol: "IBN",          provider: yfinance }
       fx:    { symbol: "USDINR=X",     provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params: { adr_ratio: 2 }        # CONFIRMED
+    params: { adr_ratio: 2 }        # CONFIRMED in the 20-F. Fitted value 1.9874 is
+                                    # biased by the NSE/NYSE close mismatch.
     reference: local
     friction_bps: *nse_plus_fx
     alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
@@ -159,7 +172,7 @@ linkages:
       adr:   { symbol: "HDB",         provider: yfinance }
       fx:    { symbol: "USDINR=X",    provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params: { adr_ratio: 3 }        # SUSPECT — fit before trusting
+    params: { adr_ratio: 3.0901 }   # FITTED (asserted 3, drift +3.00%)
     reference: local
     friction_bps: *nse_plus_fx
     alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
@@ -175,7 +188,7 @@ linkages:
       adr:   { symbol: "WIT",      provider: yfinance }
       fx:    { symbol: "USDINR=X", provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params: { adr_ratio: 1 }        # SUSPECT — fit before trusting
+    params: { adr_ratio: 0.9729 }   # FITTED (asserted 1, drift -2.71%)
     reference: local
     friction_bps: *nse_plus_fx
     alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
@@ -190,7 +203,7 @@ linkages:
       adr:   { symbol: "RDY",        provider: yfinance }
       fx:    { symbol: "USDINR=X",   provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params: { adr_ratio: 1 }        # SUSPECT — fit before trusting
+    params: { adr_ratio: 0.9856 }   # FITTED (asserted 1, drift -1.44%)
     reference: local
     friction_bps: *nse_plus_fx
     alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
@@ -207,7 +220,7 @@ linkages:
       index: { symbol: "^NSEI",    provider: yfinance }
       fx:    { symbol: "USDINR=X", provider: yfinance }
     fair_value: "index / fx * units_per_index"
-    params: { units_per_index: 1 }  # ASSERTED — fit it
+    params: { units_per_index: 0.1714 }  # FITTED (asserted 1 was 83% wrong)
     reference: us
     friction_bps: *nse_plus_fx
     alert: { warn_z: 2.0, alert_z: 3.0, min_net_edge_bps: 20, cooldown_minutes: 120 }
@@ -226,7 +239,7 @@ linkages:
       a: { symbol: "GOLDBEES.NS", provider: yfinance }
       b: { symbol: "SETFGOLD.NS", provider: yfinance }
     fair_value: "b * nav_ratio"
-    params: { nav_ratio: 0.969 }    # ASSERTED — fit it
+    params: { nav_ratio: 0.9694 }   # FITTED (asserted held, +0.05%)
     reference: a
     friction_bps: *nse_delivery
     alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 30, cooldown_minutes: 120 }
@@ -241,7 +254,7 @@ linkages:
       etf:   { symbol: "NIFTYBEES.NS", provider: yfinance }
       index: { symbol: "^NSEI",        provider: yfinance }
     fair_value: "index * units_per_index"
-    params: { units_per_index: 0.0114 }  # ASSERTED — fit it
+    params: { units_per_index: 0.011336 }  # FITTED
     reference: etf
     friction_bps: *nse_delivery
     alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 25, cooldown_minutes: 120 }
@@ -253,7 +266,7 @@ linkages:
       etf:   { symbol: "BANKBEES.NS", provider: yfinance }
       index: { symbol: "^NSEBANK",    provider: yfinance }
     fair_value: "index * units_per_index"
-    params: { units_per_index: 0.0103 }  # ASSERTED — fit it
+    params: { units_per_index: 0.010329 }  # FITTED
     reference: etf
     friction_bps: *nse_delivery
     alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 25, cooldown_minutes: 120 }
