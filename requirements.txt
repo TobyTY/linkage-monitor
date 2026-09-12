@@ -6,3 +6,5 @@ psycopg[binary]>=3.2
 python-dotenv>=1.0
 pytest>=8.0
 yfinance>=1.7
+statsmodels>=0.14
+scipy>=1.11
