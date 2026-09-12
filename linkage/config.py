@@ -13,6 +13,7 @@ time, once, quietly, for one pair, and the alert simply never fires.
 
 from __future__ import annotations
 
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -43,9 +44,31 @@ class AlertConfig(BaseModel):
         return self
 
 
+class Category(str, Enum):
+    """What a net-edge number on this linkage actually means.
+
+    Recorded per linkage because the same arithmetic carries three different
+    meanings, and conflating them is how a monitoring tool turns into a tool
+    that quietly implies every gap is money.
+    """
+
+    #: The relationship is a mathematical identity. Exists to prove the engine
+    #: works against something whose answer is known in advance.
+    VALIDATION = "validation"
+
+    #: The relationship is real and worth watching, but the legs are not both
+    #: reachable from an Indian retail account. Net edge measures whether the
+    #: linkage is holding -- it is not a profit estimate.
+    OBSERVATIONAL = "observational"
+
+    #: Both legs reachable from a demat account. Net edge means what it says.
+    TRADEABLE = "tradeable"
+
+
 class LinkageConfig(BaseModel):
     id: str
     description: str
+    category: Category = Category.OBSERVATIONAL
     legs: dict[str, LegConfig]
     fair_value: str
     params: dict[str, float] = Field(default_factory=dict)

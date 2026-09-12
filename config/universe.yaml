@@ -1,119 +1,298 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# UNIVERSE
+# UNIVERSE — 15 linkages over 29 instruments
 #
-# Friction below is in basis points of turnover, ROUND TRIP, and every line is
-# sourced. Two inputs are still yours to supply:
+# Every pair here is present because its fair value is COMPUTABLE, not because
+# the two prices happen to correlate. A correlation you cannot write down is a
+# pattern you cannot defend.
 #
-#   * `brokerage` assumes ₹0 equity delivery (Zerodha, Groww, Angel One and most
-#     discount brokers). Replace if yours charges.
-#   * `fx_spread` is the retail INR↔USD spread you can actually get. It dominates
-#     every other cost on the ADR linkages and it varies enormously by channel.
+# CATEGORIES. The same arithmetic means three different things:
 #
-# NSE equity delivery, per side unless noted (sources in README):
-#   STT                    0.1%      = 10 bps   (both sides, delivery)
-#   Stamp duty             0.015%    = 1.5 bps  (BUY side only)
-#   Exchange txn charge    ₹2.97/lakh= 0.297 bps
-#   SEBI turnover fee      0.0001%   = 0.01 bps
-#   GST                    18% on (brokerage + txn + SEBI)
-#   → round trip, zero brokerage ≈ 22.2 bps
+#   validation    The relationship is a mathematical identity. These exist to
+#                 prove the engine works against a known answer. If triangular
+#                 FX shows a persistent 40bps "gap", the bug is mine.
+#   observational The relationship is real but the legs are not both reachable
+#                 from an Indian retail account. Net edge measures whether the
+#                 linkage HOLDS. It is not a profit estimate.
+#   tradeable     Both legs reachable from a demat account. Net edge means what
+#                 it says.
 #
-# STILL ASSERTED, SHOULD BE ESTIMATED: `units_per_gram` on the gold linkage.
-# A constant that is 2% wrong manufactures a permanent 2% "divergence" that
-# looks exactly like a standing arbitrage and is nothing of the kind. Fit it
-# against history instead of asserting it.
+# FRICTION, per side, NSE equity delivery, sourced:
+#   STT                  0.1%        = 10 bps   (both sides)
+#   Stamp duty           0.015%      = 1.5 bps  (BUY only)
+#   Exchange txn charge  Rs 2.97/lakh= 0.297 bps
+#   SEBI turnover fee    0.0001%     = 0.01 bps
+#   GST                  18% on (brokerage + txn + SEBI); NOT on STT/stamp duty
+#
+#   Groww equity delivery: Rs 20 or 0.1%, WHICHEVER IS LOWER, min Rs 5.
+#   The flat cap makes brokerage size-dependent in basis points:
+#       Rs  20,000 trade -> 10.0 bps/side     Rs 1,00,000 -> 2.0 bps/side
+#       Rs  50,000 trade ->  4.0 bps/side     Rs 5,00,000 -> 0.4 bps/side
+#   Numbers below assume a REFERENCE TRADE OF Rs 1,00,000 per leg: 2 bps/side,
+#   4 bps round trip, plus 18% GST = 4.72 bps. Change the assumption and the
+#   friction changes -- which is the capacity question in miniature.
+#
+# CONVERSION CONSTANTS are asserted here as starting points ONLY. Fit them with
+#   python -m linkage.calibrate --all
+# A constant 3% stale produces a permanent 3% "spread" that never reverts and
+# looks exactly like a standing arbitrage. Observed closes already suggest the
+# WIPRO and DRREDDY ratios are wrong (their gaps sit opposite in sign to INFY
+# and ICICI, which an FX or timing story cannot explain).
 # ─────────────────────────────────────────────────────────────────────────────
+
+_nse_delivery_friction: &nse_delivery
+  stt: 20
+  stamp_duty: 1.5
+  exchange_txn: 0.6
+  sebi_turnover: 0.02
+  brokerage: 4.0          # Groww, Rs 1,00,000 reference trade, round trip
+  gst: 0.83               # 18% on (brokerage + txn + SEBI)
+
+_nse_plus_fx: &nse_plus_fx
+  stt: 20
+  stamp_duty: 1.5
+  exchange_txn: 0.6
+  sebi_turnover: 0.02
+  brokerage: 4.0
+  gst: 0.83
+  fx_spread: 50           # ← YOURS: retail INR<->USD. Dominates these pairs.
 
 linkages:
 
-  # ── OBSERVATIONAL, NOT TRADEABLE ──────────────────────────────────────────
+  # ═══ VALIDATION ═══════════════════════════════════════════════════════════
+  # Triangular FX identities. INR/X must equal USDINR times USD/X, to within
+  # the quoting spread. No fitted constants, no duty, no story -- if these do
+  # not sit near zero, the engine is broken and nothing below it can be trusted.
+
+  - id: eurinr_triangular
+    category: validation
+    description: EURINR against USDINR x EURUSD. Exact identity.
+    legs:
+      cross:  { symbol: "EURINR=X", provider: yfinance }
+      usdinr: { symbol: "USDINR=X", provider: yfinance }
+      usdx:   { symbol: "EURUSD=X", provider: yfinance }
+    fair_value: "usdinr * usdx"
+    reference: cross
+    friction_bps: {}
+    alert: { warn_z: 3.0, alert_z: 4.0, min_net_edge_bps: 0, cooldown_minutes: 240 }
+
+  - id: gbpinr_triangular
+    category: validation
+    description: GBPINR against USDINR x GBPUSD. Exact identity.
+    legs:
+      cross:  { symbol: "GBPINR=X", provider: yfinance }
+      usdinr: { symbol: "USDINR=X", provider: yfinance }
+      usdx:   { symbol: "GBPUSD=X", provider: yfinance }
+    fair_value: "usdinr * usdx"
+    reference: cross
+    friction_bps: {}
+    alert: { warn_z: 3.0, alert_z: 4.0, min_net_edge_bps: 0, cooldown_minutes: 240 }
+
+  - id: audinr_triangular
+    category: validation
+    description: AUDINR against USDINR x AUDUSD. Exact identity.
+    legs:
+      cross:  { symbol: "AUDINR=X", provider: yfinance }
+      usdinr: { symbol: "USDINR=X", provider: yfinance }
+      usdx:   { symbol: "AUDUSD=X", provider: yfinance }
+    fair_value: "usdinr * usdx"
+    reference: cross
+    friction_bps: {}
+    alert: { warn_z: 3.0, alert_z: 4.0, min_net_edge_bps: 0, cooldown_minutes: 240 }
+
+  - id: jpyinr_triangular
+    category: validation
+    description: >
+      JPYINR against USDINR / USDJPY. The inverted leg -- included precisely
+      because it is the one a sign error would slip through.
+    legs:
+      cross:  { symbol: "JPYINR=X", provider: yfinance }
+      usdinr: { symbol: "USDINR=X", provider: yfinance }
+      usdjpy: { symbol: "USDJPY=X", provider: yfinance }
+    fair_value: "usdinr / usdjpy"
+    reference: cross
+    friction_bps: {}
+    alert: { warn_z: 3.0, alert_z: 4.0, min_net_edge_bps: 0, cooldown_minutes: 240 }
+
+  # ═══ OBSERVATIONAL — ADRs ═════════════════════════════════════════════════
   # An Indian retail investor cannot convert between an ADR and the local share:
-  # that requires the depositary and a broker with the permissions, and outward
-  # remittance sits under LRS with TCS on top. So the "net edge" on these two is
-  # NOT a profit estimate. It is a measure of whether the relationship is
-  # holding. Treat a breach as information about the market, not an instruction.
+  # that needs the depositary and a broker with permissions, and outward
+  # remittance sits under LRS with TCS. These measure whether the link holds.
+  #
+  # Note the two legs close at different times -- NSE at 10:00 UTC, NYSE at
+  # 20:00 UTC -- so a daily "gap" always contains an overnight move. That is a
+  # real limitation of daily data, not something the engine can subtract away.
 
   - id: infy_adr
-    description: >
-      Infosys NYSE ADR against the NSE listing at spot USDINR. ADR ratio 1:1,
-      confirmed against Infosys investor FAQ and the FY2026 Form 20-F.
+    category: observational
+    description: Infosys NYSE ADR against NSE. Ratio 1:1, confirmed in the FY2026 20-F.
     legs:
-      local: { symbol: "INFY.NS",   provider: yfinance }
-      adr:   { symbol: "INFY",      provider: yfinance }
-      fx:    { symbol: "USDINR=X",  provider: yfinance }
+      local: { symbol: "INFY.NS",  provider: yfinance }
+      adr:   { symbol: "INFY",     provider: yfinance }
+      fx:    { symbol: "USDINR=X", provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params:
-      adr_ratio: 1            # CONFIRMED: 1 ordinary share per ADS
+    params: { adr_ratio: 1 }        # CONFIRMED
     reference: local
-    friction_bps:
-      stt: 20                 # 0.1% both sides, delivery
-      stamp_duty: 1.5         # buy side only
-      exchange_txn: 0.6       # ₹2.97/lakh × 2
-      sebi_turnover: 0.02
-      gst: 0.11               # 18% on txn + SEBI, zero brokerage
-      brokerage: 0            # ← YOURS: ₹0 at discount brokers
-      fx_spread: 50           # ← YOURS: retail INR↔USD, dominates everything
-    alert:
-      warn_z: 1.8
-      alert_z: 2.5
-      min_net_edge_bps: 15
-      cooldown_minutes: 60
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
 
   - id: icici_adr
-    description: >
-      ICICI Bank NYSE ADR against the NSE listing. ADR ratio 2:1, confirmed
-      against the Form 20-F listing history.
+    category: observational
+    description: ICICI Bank NYSE ADR against NSE. Ratio 2:1, confirmed in the 20-F.
     legs:
       local: { symbol: "ICICIBANK.NS", provider: yfinance }
       adr:   { symbol: "IBN",          provider: yfinance }
       fx:    { symbol: "USDINR=X",     provider: yfinance }
     fair_value: "adr * fx / adr_ratio"
-    params:
-      adr_ratio: 2            # CONFIRMED: 2 ordinary shares per ADS
+    params: { adr_ratio: 2 }        # CONFIRMED
     reference: local
-    friction_bps:
-      stt: 20
-      stamp_duty: 1.5
-      exchange_txn: 0.6
-      sebi_turnover: 0.02
-      gst: 0.11
-      brokerage: 0            # ← YOURS
-      fx_spread: 50           # ← YOURS
-    alert:
-      warn_z: 1.8
-      alert_z: 2.5
-      min_net_edge_bps: 15
-      cooldown_minutes: 60
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
 
-  # ── ACTUALLY TRADEABLE ────────────────────────────────────────────────────
-  # Both legs of the decision are reachable from an Indian demat account: the
-  # ETF trades on NSE. This is the linkage where "net edge" means what it says.
-
-  - id: goldbees
+  - id: hdfc_adr
+    category: observational
     description: >
-      Nippon India Gold ETF on NSE against COMEX gold converted to INR. The
-      standing gap is real and largely explained by import duty and GST. Note
-      the ETF's ~0.14% annual expense ratio is a HOLDING cost embedded in the
-      price, not a per-trade cost — it belongs in the fair value as a drag, not
-      in friction. Left out of both until estimated properly.
+      HDFC Bank NYSE ADR against NSE. Ratio ASSERTED at 3 and probably stale --
+      the post-merger implied gap sits near -5% where the other ADRs sit near
+      -2%. Fit it.
+    legs:
+      local: { symbol: "HDFCBANK.NS", provider: yfinance }
+      adr:   { symbol: "HDB",         provider: yfinance }
+      fx:    { symbol: "USDINR=X",    provider: yfinance }
+    fair_value: "adr * fx / adr_ratio"
+    params: { adr_ratio: 3 }        # SUSPECT — fit before trusting
+    reference: local
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
+
+  - id: wipro_adr
+    category: observational
+    description: >
+      Wipro NYSE ADR against NSE. Ratio ASSERTED at 1 and the observed gap sits
+      OPPOSITE in sign to Infosys and ICICI, which no FX or timing story
+      explains. Bonus issues have almost certainly moved it. Fit it.
+    legs:
+      local: { symbol: "WIPRO.NS", provider: yfinance }
+      adr:   { symbol: "WIT",      provider: yfinance }
+      fx:    { symbol: "USDINR=X", provider: yfinance }
+    fair_value: "adr * fx / adr_ratio"
+    params: { adr_ratio: 1 }        # SUSPECT — fit before trusting
+    reference: local
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
+
+  - id: drreddy_adr
+    category: observational
+    description: >
+      Dr Reddy's NYSE ADR against NSE. Ratio ASSERTED at 1; the 2024 5:1 split
+      makes this the single most likely stale constant in the file. Fit it.
+    legs:
+      local: { symbol: "DRREDDY.NS", provider: yfinance }
+      adr:   { symbol: "RDY",        provider: yfinance }
+      fx:    { symbol: "USDINR=X",   provider: yfinance }
+    fair_value: "adr * fx / adr_ratio"
+    params: { adr_ratio: 1 }        # SUSPECT — fit before trusting
+    reference: local
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 1.8, alert_z: 2.5, min_net_edge_bps: 15, cooldown_minutes: 60 }
+
+  - id: indy_nifty
+    category: observational
+    description: >
+      iShares India 50 (US) against Nifty 50 in USD. INDY tracks the Nifty 50
+      itself rather than an MSCI proxy, so the relationship is mechanical -- but
+      the US fund prices through US hours while Nifty is shut, so most of any
+      intraday gap is the market's guess at tomorrow's open.
+    legs:
+      us:    { symbol: "INDY",     provider: yfinance }
+      index: { symbol: "^NSEI",    provider: yfinance }
+      fx:    { symbol: "USDINR=X", provider: yfinance }
+    fair_value: "index / fx * units_per_index"
+    params: { units_per_index: 1 }  # ASSERTED — fit it
+    reference: us
+    friction_bps: *nse_plus_fx
+    alert: { warn_z: 2.0, alert_z: 3.0, min_net_edge_bps: 20, cooldown_minutes: 120 }
+
+  # ═══ TRADEABLE ════════════════════════════════════════════════════════════
+  # Both legs on NSE, both reachable from a Groww account.
+
+  - id: gold_etf_pair
+    category: tradeable
+    description: >
+      Nippon Gold ETF against SBI Gold ETF. Same underlying metal, two funds.
+      Any divergence beyond the expense-ratio difference is pure tracking error
+      and both legs are one tap apart in the same app. The cleanest genuinely
+      actionable linkage in this file.
+    legs:
+      a: { symbol: "GOLDBEES.NS", provider: yfinance }
+      b: { symbol: "SETFGOLD.NS", provider: yfinance }
+    fair_value: "b * nav_ratio"
+    params: { nav_ratio: 0.969 }    # ASSERTED — fit it
+    reference: a
+    friction_bps: *nse_delivery
+    alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 30, cooldown_minutes: 120 }
+
+  - id: niftybees_index
+    category: tradeable
+    description: >
+      Nippon Nifty 50 ETF against the index. Tests ETF tracking during live
+      hours. The index leg is not directly tradeable, so treat the gap as a
+      tracking-quality measure rather than a trade.
+    legs:
+      etf:   { symbol: "NIFTYBEES.NS", provider: yfinance }
+      index: { symbol: "^NSEI",        provider: yfinance }
+    fair_value: "index * units_per_index"
+    params: { units_per_index: 0.0114 }  # ASSERTED — fit it
+    reference: etf
+    friction_bps: *nse_delivery
+    alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 25, cooldown_minutes: 120 }
+
+  - id: bankbees_index
+    category: tradeable
+    description: Nippon Bank ETF against Nifty Bank. Same shape as niftybees.
+    legs:
+      etf:   { symbol: "BANKBEES.NS", provider: yfinance }
+      index: { symbol: "^NSEBANK",    provider: yfinance }
+    fair_value: "index * units_per_index"
+    params: { units_per_index: 0.0103 }  # ASSERTED — fit it
+    reference: etf
+    friction_bps: *nse_delivery
+    alert: { warn_z: 2.5, alert_z: 3.5, min_net_edge_bps: 25, cooldown_minutes: 120 }
+
+  # ═══ OBSERVATIONAL — METALS ═══════════════════════════════════════════════
+  # The domestic ETF leg is tradeable; the COMEX leg is not reachable from an
+  # Indian retail account, so the pair is observational. Its value is that the
+  # standing gap has a KNOWN cause -- import duty and GST -- which makes it the
+  # best available test of whether the friction ledger can account for a gap it
+  # already understands.
+
+  - id: goldbees_comex
+    category: observational
+    description: Nippon Gold ETF against COMEX gold in INR, with duty and GST.
     legs:
       etf:  { symbol: "GOLDBEES.NS", provider: yfinance }
       spot: { symbol: "GC=F",        provider: yfinance }
       fx:   { symbol: "USDINR=X",    provider: yfinance }
     fair_value: "spot * fx / 31.1035 * units_per_gram * (1 + import_duty) * (1 + gst)"
     params:
-      units_per_gram: 0.01    # ASSERTED — fit this against history instead
-      import_duty: 0.06       # verify against the current customs notification
+      units_per_gram: 0.01          # ASSERTED — fit it
+      import_duty: 0.06             # verify against the current notification
       gst: 0.03
     reference: etf
-    friction_bps:
-      stt: 20
-      stamp_duty: 1.5
-      exchange_txn: 0.6
-      sebi_turnover: 0.02
-      gst_on_charges: 0.11
-      brokerage: 0            # ← YOURS
-    alert:
-      warn_z: 2.0
-      alert_z: 3.0
-      min_net_edge_bps: 25
-      cooldown_minutes: 120
+    friction_bps: *nse_delivery
+    alert: { warn_z: 2.0, alert_z: 3.0, min_net_edge_bps: 25, cooldown_minutes: 120 }
+
+  - id: silverbees_comex
+    category: observational
+    description: Nippon Silver ETF against COMEX silver in INR, with duty and GST.
+    legs:
+      etf:  { symbol: "SILVERBEES.NS", provider: yfinance }
+      spot: { symbol: "SI=F",          provider: yfinance }
+      fx:   { symbol: "USDINR=X",      provider: yfinance }
+    fair_value: "spot * fx / 31.1035 * units_per_gram * (1 + import_duty) * (1 + gst)"
+    params:
+      units_per_gram: 1.0           # ASSERTED — fit it
+      import_duty: 0.06
+      gst: 0.03
+    reference: etf
+    friction_bps: *nse_delivery
+    alert: { warn_z: 2.0, alert_z: 3.0, min_net_edge_bps: 25, cooldown_minutes: 120 }
