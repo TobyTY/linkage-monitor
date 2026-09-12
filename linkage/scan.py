@@ -46,6 +46,43 @@ PROVIDERS: dict[str, type] = {"yfinance": YFinanceProvider}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_UNIVERSE = PROJECT_ROOT / "config" / "universe.yaml"
 
+#: Written by `python -m linkage.stat_pairs --fit`. Absent until that has been
+#: run, which is why it is included only when it exists rather than required.
+FITTED_PAIRS = PROJECT_ROOT / "config" / "pairs.fitted.yaml"
+
+
+def default_universes() -> list[Path]:
+    files = [DEFAULT_UNIVERSE]
+    if FITTED_PAIRS.exists():
+        files.append(FITTED_PAIRS)
+    return files
+
+
+def load_universes(paths: list[Path]) -> Universe:
+    """Merge several universe files into one.
+
+    The computable linkages and the fitted statistical pairs live in separate
+    files because they are different KINDS of claim -- one set's constants come
+    from filings and duty schedules, the other's from a regression over a window
+    that is named in the file. Merging them here rather than in the config keeps
+    that distinction visible on disk while letting one scan run both.
+
+    Ids must stay unique across files. A pair id colliding with a linkage id
+    would otherwise mean two detectors sharing one row of persisted state.
+    """
+    linkages = []
+    seen: dict[str, Path] = {}
+    for path in paths:
+        for linkage in load_universe(path).linkages:
+            if linkage.id in seen:
+                raise SystemExit(
+                    f"{path}: duplicate linkage id {linkage.id!r}, already "
+                    f"defined in {seen[linkage.id]}"
+                )
+            seen[linkage.id] = path
+            linkages.append(linkage)
+    return Universe(linkages=linkages)
+
 
 def build_providers(universe: Universe) -> dict[str, MarketDataProvider]:
     providers: dict[str, MarketDataProvider] = {}
@@ -286,7 +323,14 @@ def open_store(url: str | None, *, disabled: bool) -> StateStore | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan the linkage universe.")
-    parser.add_argument("--universe", type=Path, default=DEFAULT_UNIVERSE)
+    parser.add_argument(
+        "--universe",
+        type=Path,
+        action="append",
+        default=None,
+        help="may be repeated; files are merged and ids must stay unique "
+        f"(default: {DEFAULT_UNIVERSE.name} plus {FITTED_PAIRS.name} if present)",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--interval", type=int, default=None)
     parser.add_argument("--max-age", type=float, default=900.0)
@@ -311,7 +355,7 @@ def main() -> None:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    universe = load_universe(args.universe)
+    universe = load_universes(args.universe or default_universes())
     providers = build_providers(universe)
     histories: dict[str, SpreadHistory] = {}
     detectors: dict[str, LinkageDetector] = {}

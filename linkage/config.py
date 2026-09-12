@@ -151,6 +151,17 @@ class LinkageConfig(BaseModel):
 class Universe(BaseModel):
     linkages: list[LinkageConfig]
 
+    @field_validator("linkages", mode="before")
+    @classmethod
+    def _empty_is_allowed(cls, value: Any) -> Any:
+        """`linkages:` with nothing under it means no linkages.
+
+        This is not a hypothetical. `stat_pairs --fit` writes exactly that file
+        when no pair survives the multiple-testing correction, which is the
+        correct output and must not crash the scanner that reads it.
+        """
+        return [] if value is None else value
+
     @field_validator("linkages")
     @classmethod
     def _unique_ids(cls, linkages: list[LinkageConfig]) -> list[LinkageConfig]:
@@ -192,3 +203,82 @@ def load_universe(path: str | Path) -> Universe:
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: expected a mapping at the top level")
     return Universe.model_validate(raw)
+
+class Access(str, Enum):
+    """What can actually be done with this pair from a Groww account.
+
+    Recorded because it changes what a net-edge number means, and because it is
+    the field most likely to be quietly ignored. A cointegrated pair whose short
+    leg is unreachable is a pair you can watch, not a pair you can trade.
+    """
+
+    #: Both legs tradeable, short side included.
+    FULL = "full"
+
+    #: Both legs buyable, but shorting needs F&O or intraday -- so the classic
+    #: A - beta*B spread is not available overnight.
+    LONG_ONLY = "long_only"
+
+    #: At least one leg is unreachable from an Indian retail account.
+    NONE = "none"
+
+    @property
+    def category(self) -> Category:
+        """How an edge number on this pair should be read."""
+        return Category.TRADEABLE if self is Access.FULL else Category.OBSERVATIONAL
+
+
+class PairSpec(BaseModel):
+    """One statistical pair, as written down by a human.
+
+    Deliberately holds no hedge ratio. The relationship between these two
+    symbols is not knowable in advance -- it has to be estimated from data and
+    then tested -- so a beta living in this file would be a fitted number
+    disguised as a declared one, and nobody would know when it went stale.
+    Fitting happens in `stat_pairs.py`, which writes its output somewhere
+    visible and dated.
+    """
+
+    id: str
+    group: str
+    a: str
+    b: str
+    access: Access
+    mechanism: str
+    breaks_when: str
+
+    @model_validator(mode="after")
+    def _legs_differ(self) -> PairSpec:
+        if self.a == self.b:
+            raise ValueError(f"{self.id}: both legs are {self.a}")
+        return self
+
+
+class Catalogue(BaseModel):
+    pairs: list[PairSpec]
+
+    @field_validator("pairs")
+    @classmethod
+    def _unique_ids(cls, pairs: list[PairSpec]) -> list[PairSpec]:
+        seen: set[str] = set()
+        for pair in pairs:
+            if pair.id in seen:
+                raise ValueError(f"duplicate pair id {pair.id!r}")
+            seen.add(pair.id)
+        return pairs
+
+    def symbols(self) -> set[str]:
+        return {s for pair in self.pairs for s in (pair.a, pair.b)}
+
+    def by_id(self, pair_id: str) -> PairSpec:
+        for pair in self.pairs:
+            if pair.id == pair_id:
+                return pair
+        raise KeyError(pair_id)
+
+
+def load_catalogue(path: str | Path) -> Catalogue:
+    raw: Any = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: expected a mapping at the top level")
+    return Catalogue.model_validate(raw)
