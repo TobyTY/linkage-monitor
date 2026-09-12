@@ -24,12 +24,12 @@ Measured 2026-09-12 over 5 years of split- and dividend-adjusted daily closes.
 | `audusd_usdcad` | -0.74 | 0.718 | no | 92d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `audusd_gold` | +0.11 | 0.299 | no | 64d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `usdcad_wti` | -0.03 | 0.189 | no | 52d | NOT COINTEGRATED — correlation only, no tradeable spread |
-| `usdjpy_us10y` | +0.02 | 0.177 | no | 27d | NOT COINTEGRATED — correlation only, no tradeable spread |
+| `usdjpy_us10y` | +0.02 | 0.189 | no | 23d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `eurjpy_gbpjpy` | +0.83 | 0.176 | no | 36d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `gbpusd_gbpjpy` | +0.40 | 0.157 | no | 78d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `usdmxn_wti` | -0.01 | 0.727 | no | 163d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `eurusd_eurgbp` | +0.10 | 0.638 | no | 113d | NOT COINTEGRATED — correlation only, no tradeable spread |
-| `usdsgd_usdcnh` | — | — | — | — | usdsgd_usdcnh: only 1 aligned observations |
+| `usdsgd_usdcnh` | — | — | — | — | usdsgd_usdcnh: only 1 usable observations |
 | `usdzar_gold` | -0.02 | 0.198 | no | 29d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `audjpy_spx` | -0.03 | 0.247 | no | 63d | NOT COINTEGRATED — correlation only, no tradeable spread |
 | `spx_ndx` | +0.95 | 0.052 | no | 73d | NOT COINTEGRATED — correlation only, no tradeable spread |
@@ -237,18 +237,18 @@ Measured 2026-09-12 over 5 years of split- and dividend-adjusted daily closes.
 
 | measure | value |
 |---|---|
-| Sample | 1254 days, 2021-09-13 → 2026-09-11 |
-| Return correlation | +0.017 |
+| Sample | 1173 days, 2022-01-06 → 2026-09-11 |
+| Return correlation | +0.020 |
 | Rolling 60d corr (now / min / max) | -0.06 / -0.27 / +0.37 |
 | Relationship stability | variable |
-| Engle-Granger p-value | 0.1771 |
-| ADF p-value on spread | 0.0718 |
-| Hedge ratio β (log-log) | +0.2995 |
-| R² | 0.855 |
-| Spread SD | 377 bps |
-| Half-life | 27.0 days |
-| Current z | -0.57 |
-| Max historical \|z\| | 2.67 |
+| Engle-Granger p-value | 0.1892 |
+| ADF p-value on spread | 0.0556 |
+| Hedge ratio β (log-log) | +0.3475 |
+| R² | 0.792 |
+| Spread SD | 366 bps |
+| Half-life | 22.9 days |
+| Current z | -0.85 |
+| Max historical \|z\| | 2.66 |
 
 **Verdict.** NOT COINTEGRATED — correlation only, no tradeable spread
 
@@ -365,7 +365,7 @@ Measured 2026-09-12 over 5 years of split- and dividend-adjusted daily closes.
 
 **Access.** `none` — at least one leg unreachable from an Indian retail account
 
-**Measured.** Could not profile: usdsgd_usdcnh: only 1 aligned observations
+**Measured.** Could not profile: usdsgd_usdcnh: only 1 usable observations
 
 
 #### `usdzar_gold` — USDZAR=X vs GC=F

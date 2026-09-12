@@ -38,6 +38,8 @@ import pandas as pd
 import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller, coint
 
+from linkage.quality import ScreenReport, screen
+
 # statsmodels is chatty about small samples and interpolated p-values; the
 # sample sizes are reported per pair so the reader can judge for themselves.
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="statsmodels")
@@ -71,6 +73,7 @@ class PairProfile:
     half_life_days: float | None
     current_z: float
     max_abs_z: float
+    screen_report: ScreenReport | None = None
 
     @property
     def is_cointegrated(self) -> bool:
@@ -141,8 +144,13 @@ def profile_pair(
 ) -> PairProfile:
     """Measure one pair from an aligned two-column price frame."""
     frame = prices[[symbol_a, symbol_b]].dropna()
+
+    # Screen BEFORE anything is measured. Two bad prints out of 1239 once took
+    # this pair's spread SD from 15 bps to 1851 bps -- see linkage/quality.py.
+    frame, report = screen(frame)
+
     if len(frame) < 60:
-        raise ValueError(f"{pair_id}: only {len(frame)} aligned observations")
+        raise ValueError(f"{pair_id}: only {len(frame)} usable observations")
 
     a, b = frame[symbol_a], frame[symbol_b]
 
@@ -185,4 +193,5 @@ def profile_pair(
         half_life_days=_half_life(spread),
         current_z=float(z.iloc[-1]),
         max_abs_z=float(z.abs().max()),
+        screen_report=report,
     )
