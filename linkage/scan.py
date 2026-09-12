@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 from linkage.config import LinkageConfig, Universe, load_universe
 from linkage.detector import WARMUP_OBSERVATIONS, LinkageDetector, Verdict
 from linkage.engine import SpreadHistory, evaluate_linkage
+from linkage.events import EventCalendar
 from linkage.notify import Notifier, TelegramNotifier
 from linkage.notify import build as build_notifier
 from linkage.notify import render
@@ -225,6 +226,7 @@ def scan_once(
     horizon_days: float,
     store: StateStore | None = None,
     notifier: Notifier | None = None,
+    calendar: EventCalendar | None = None,
 ) -> list[tuple[LinkageConfig, Verdict]]:
     for name, provider in providers.items():
         try:
@@ -259,6 +261,24 @@ def scan_once(
             seen_this_cycle.append((linkage, observation))
 
         print(_render(linkage, observation, verdict))
+
+        if verdict.should_alert and calendar is not None:
+            # An earnings date inside the holding horizon is the `breaks_when`
+            # clause on almost every equity pair in the catalogue. A spread that
+            # diverges the day before results is the relationship being tested,
+            # not a spread about to revert, and entering there is the most
+            # expensive thing this system could do while looking entirely
+            # ordinary.
+            blocking = calendar.blocking(
+                [leg.symbol for leg in linkage.legs.values()],
+                within_days=horizon_days,
+            )
+            if blocking:
+                print(
+                    f"  {linkage.id:<20} SUPPRESSED — "
+                    + "; ".join(w.describe() for w in blocking)
+                )
+                continue
 
         if verdict.should_alert:
             previous = last_alert.get(linkage.id)
@@ -352,6 +372,11 @@ def main() -> None:
         "--no-db", action="store_true", help="run in memory; forget everything on exit"
     )
     parser.add_argument(
+        "--no-event-guard",
+        action="store_true",
+        help="alert even when a leg reports inside the horizon (not advised)",
+    )
+    parser.add_argument(
         "--verify-telegram",
         action="store_true",
         help="check the bot token and send a test message before starting",
@@ -396,6 +421,20 @@ def main() -> None:
         f"interval {interval}s, horizon {args.horizon:g}d\n"
     )
 
+    calendar = None
+    if not args.no_event_guard:
+        symbols = sorted(universe.symbols_for("yfinance"))
+        print(f"loading the event calendar for {len(symbols)} symbols...")
+        calendar = EventCalendar.build(symbols)
+        soon = [
+            w
+            for s in symbols
+            if (w := calendar.upcoming(s, within_days=14)) is not None
+        ]
+        for window in sorted(soon, key=lambda w: w.days_away):
+            print(f"  {window.describe()}")
+        print(f"  {len(soon)} of {len(symbols)} report within 14 days.\n")
+
     if args.warmup:
         warm_detectors(
             universe, providers, detectors, histories, days=args.warmup, skip=ready
@@ -413,6 +452,7 @@ def main() -> None:
             horizon_days=args.horizon,
             store=store,
             notifier=notifier,
+            calendar=calendar,
         ):
             pass  # the notifier already printed it
         if args.once:
