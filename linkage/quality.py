@@ -23,6 +23,24 @@ MAD OUTLIERS. Median absolute deviation rather than standard deviation, because
 the outlier being hunted is exactly what corrupts a standard deviation. A
 3-sigma screen computed on contaminated data moves its own threshold out to
 cover the contamination.
+
+STALE PRINTS, added after a second real failure that neither screen above could
+see. On 2025-03-18 Yahoo returned NIFTYBEES.NS and BANKBEES.NS at exactly their
+previous closes -- 252.179993 and 495.859985, repeated to the last decimal --
+while the indices they track moved +1.45% and +1.99%. Nothing spiked and
+nothing was an outlier in level; the ETF leg simply did not update. The spread
+therefore opened a gap of roughly the index move, the detector read it as a
+-6 sigma divergence, and it "reverted" the next day when the print caught up.
+
+That alert was untradeable in the most basic sense: the price it fired on never
+existed, so no order could have been filled at it. Left unscreened it was the
+single largest contributor to the de-trended backtest on both index pairs, and
+it inflated a headline result on two pairs at once -- which also meant the two
+pairs were not the independent replications they appeared to be.
+
+The tell is EXACT equality. A real session where an ETF closes unchanged while
+its index moves 2% is possible; one where it closes unchanged to six decimal
+places is a value carried forward.
 """
 
 from __future__ import annotations
@@ -39,6 +57,11 @@ DEFAULT_MAX_DAILY_MOVE = 0.4
 #: Scaling that makes MAD comparable to a standard deviation for normal data.
 MAD_TO_SIGMA = 1.4826
 
+#: How far the OTHER leg must have moved before an unchanged print is treated as
+#: stale rather than as a quiet day. 0.5% is comfortably outside the range where
+#: an index and the ETF tracking it can honestly disagree by rounding.
+DEFAULT_MIN_PARTNER_MOVE = 0.005
+
 
 @dataclass
 class ScreenReport:
@@ -48,6 +71,7 @@ class ScreenReport:
     rows_out: int
     spikes: dict[str, list[pd.Timestamp]] = field(default_factory=dict)
     outliers: list[pd.Timestamp] = field(default_factory=list)
+    stale: dict[str, list[pd.Timestamp]] = field(default_factory=dict)
 
     @property
     def removed(self) -> int:
@@ -75,6 +99,10 @@ class ScreenReport:
             shown = ", ".join(str(d.date()) for d in self.outliers[:3])
             more = f" +{len(self.outliers) - 3} more" if len(self.outliers) > 3 else ""
             parts.append(f"MAD outliers: {shown}{more}")
+        for symbol, dates in self.stale.items():
+            shown = ", ".join(str(d.date()) for d in dates[:3])
+            more = f" +{len(dates) - 3} more" if len(dates) > 3 else ""
+            parts.append(f"stale print in {symbol}: {shown}{more}")
         return "; ".join(parts)
 
 
@@ -102,6 +130,36 @@ def find_spikes(
     return list(log_price.index[spiked.fillna(False)])
 
 
+def find_stale_prints(
+    frame: pd.DataFrame, *, min_partner_move: float = DEFAULT_MIN_PARTNER_MOVE
+) -> dict[str, list[pd.Timestamp]]:
+    """Dates where one leg repeated its previous close while another leg moved.
+
+    Exact equality is the test, deliberately. An unchanged close is a normal
+    event; an unchanged close to the last representable decimal, on a day the
+    paired series moved half a percent or more, is a value that was carried
+    forward rather than observed.
+
+    Checked per column against the LARGEST move among the other columns, so a
+    stale leg is caught whichever leg it is and however many legs there are.
+    """
+    if len(frame.columns) < 2 or len(frame) < 2:
+        return {}
+
+    moves = frame.pct_change().abs()
+    unchanged = frame.diff() == 0
+
+    found: dict[str, list[pd.Timestamp]] = {}
+    for column in frame.columns:
+        others = [c for c in frame.columns if c != column]
+        partner_moved = moves[others].max(axis=1) >= min_partner_move
+        flagged = unchanged[column] & partner_moved
+        dates = list(frame.index[flagged.fillna(False)])
+        if dates:
+            found[str(column)] = dates
+    return found
+
+
 def find_mad_outliers(spread: pd.Series, *, threshold: float = 8.0) -> list[pd.Timestamp]:
     """Spread observations absurdly far from the median, by MAD.
 
@@ -127,6 +185,7 @@ def screen(
     *,
     max_daily_move: float = DEFAULT_MAX_DAILY_MOVE,
     mad_threshold: float = 8.0,
+    min_partner_move: float = DEFAULT_MIN_PARTNER_MOVE,
 ) -> tuple[pd.DataFrame, ScreenReport]:
     """Remove bad prints from a two-or-more column price frame.
 
@@ -144,6 +203,12 @@ def screen(
         dates = find_spikes(frame[column], max_daily_move=max_daily_move)
         if dates:
             report.spikes[str(column)] = dates
+            drop.update(dates)
+
+    stale = find_stale_prints(frame, min_partner_move=min_partner_move)
+    if stale:
+        report.stale = stale
+        for dates in stale.values():
             drop.update(dates)
 
     if len(frame.columns) >= 2:

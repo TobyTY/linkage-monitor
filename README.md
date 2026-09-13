@@ -57,26 +57,33 @@ statistical pairs an order of magnitude wider. A relationship you can write
 down as arithmetic is tighter than one you have to fit.
 
 **The alerting rule beats a random entry and still loses money.** Walk-forward
-on the gold ETF pair: **+13.59 bps** edge over the baseline of entering on every
-eligible day, **−13.45 bps** after friction. That verdict — "beats baseline,
+on the gold ETF pair: **+13.10 bps** edge over the baseline of entering on every
+eligible day, **−13.93 bps** after friction. That verdict — "beats baseline,
 loses to friction" — is the honest headline.
 
-**That verdict was the drift, not the pair.** The same backtest fired 8 of 9
-profitable alerts below the mean and 0 of 6 above it. Separation that clean at
-n = 15 is a warning rather than a finding — the GOLDBEES/SETFGOLD ratio slid
-0.974 → 0.969 over five years on an expense-ratio differential, so the rule was
-plausibly booking a trend as if it were reversion. Removing a **causal** rolling
-trend (`--detrend`) and re-running over identical days:
+(Every backtest number on this page uses `--warmup 550`. De-trending needs 250
+observations before it can produce anything, so a plain run at the default
+warmup would be scored over a longer history than the de-trended one it is
+compared against. Raising both to 550 buys the comparison identical days, at the
+cost of a shorter sample.)
 
-| | plain | de-trended |
-|---|---|---|
-| alerts | 15 | 13 |
-| edge over baseline | +13.59 bps | **+41.72 bps** |
-| net of friction | −13.45 bps | **+14.80 bps** |
-| direction | 8/9 below, **0/6 above** | 5/6 below, 6/7 above |
+**That verdict was the drift, not the pair — and it replicates.** The same
+backtest fired 8 of 9 profitable alerts below the mean and 0 of 6 above it.
+Separation that clean is a warning rather than a finding: the GOLDBEES/SETFGOLD
+ratio slid 0.974 → 0.969 over five years on an expense-ratio differential, so
+the rule was plausibly booking a trend as if it were reversion. Removing a
+**causal** rolling trend (`--detrend`) and re-running over identical days, on
+all three tradeable linkages rather than one:
 
-The asymmetry disappears, which is what a drift explanation predicts and a
-reversion explanation does not.
+| | plain edge | plain net | de-trended edge | de-trended net |
+|---|---|---|---|---|
+| gold ETF pair | +13.10 bps | −13.93 bps | +42.23 bps | **+15.29 bps** |
+| NIFTYBEES/index | −26.64 bps | −52.10 bps | +44.78 bps | **+17.76 bps** |
+| BANKBEES/index | −8.89 bps | −35.08 bps | +82.03 bps | **+55.05 bps** |
+
+The one-sided direction signature collapses every time. Plain, the three fired
+0/5, 23/23 and 0/25 of their alerts on a single side of the mean. De-trended,
+all three fire on both sides and win on both.
 
 **Believe that only as far as the null test allows.** Subtracting a locally
 fitted trend induces negative autocorrelation in what remains — the residual is
@@ -87,9 +94,28 @@ random walks, drifting random walks, and a true OU process. De-trending a random
 walk produces no edge, and the reverting control is still found
 (`tests/test_backtest_null.py`). The filter is not manufacturing the result.
 
-**What that still does not establish.** One pair, n = 13, and a de-trend window
-of 250 days that was chosen rather than searched. This is a hypothesis that
-survived its first real attempt to kill it, not an edge.
+**What that still does not establish.** Alert counts are 13, 13 and 8 — small,
+and the de-trend window of 250 days was chosen rather than searched. The two
+index pairs also overlap in time and both track Indian equity, so three pairs is
+not three independent samples. This is a hypothesis that has now survived three
+attempts to kill it instead of one, which is a different thing from an edge.
+
+**The first version of this table was contaminated, and finding out is the
+story.** Before the stale-print screen existed, both index pairs showed a −6
+sigma alert on 2025-03-18 that was the single largest contributor to each. It
+was not a market event. Yahoo returned NIFTYBEES.NS at 252.179993 and
+BANKBEES.NS at 495.859985 — exactly their previous closes, to the last decimal —
+while the indices they track moved +1.45% and +1.99%. The ETF leg simply did not
+update. The detector read the gap as a divergence and the next day's catch-up as
+a reversion.
+
+Nothing already in `quality.py` could see it: nothing spiked, and neither price
+was an outlier in level. The alert was also untradeable in the most basic sense,
+since the price it fired on never existed. And because the same bad date hit two
+pairs at once, it was quietly making two "independent replications" into one
+observation. `find_stale_prints` is the response — an exact repeat of the
+previous close on a day another leg moved more than 0.5%. The numbers in the
+table above are all post-screen.
 
 **The reversion test was admitting 29% of random walks.** `MIN_THETA_TSTAT` was
 2.0, which is what a t-table gives for 5% significance. But the fit — the change
@@ -365,5 +391,6 @@ Headline and unscheduled-news scoring — the event engine covers scheduled
 events only, and calibrating anything on headlines needs labelled history that
 free feeds do not provide. Intraday data: everything here is daily closes, so
 the half-lives and thresholds describe a daily world while the scanner runs by
-the minute. And the de-trended backtest result needs replicating across the
-other computable linkages before it means anything.
+the minute. The de-trended
+backtest result has replicated on all three tradeable linkages, but on 13, 13
+and 8 alerts, and the two index pairs are not independent of each other.
