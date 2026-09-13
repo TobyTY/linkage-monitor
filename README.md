@@ -255,14 +255,35 @@ leg reports when.
 
 ## Alerts and the dashboard
 
-Alerts go to the console and to Telegram through one renderer — two would mean
-two versions of what an alert said, and the one that gets read is the one nobody
-checked. Every message carries the whole arithmetic (z, percentile, half-life
-and its t-statistic, expected reversion, friction, net) because the recipient is
-on a phone and cannot open a terminal to check it. Delivery failure never stops
-detection: alerts are written to the database *before* they are sent, and four
-real transport failures plus the HTTP-200-with-`ok:false` case are fired at the
-notifier under test.
+Alerts go to the console and to any configured channel — **ntfy, Discord or
+Telegram** — through one renderer. Two renderers would mean two versions of what
+an alert said, and the one that gets read is the one nobody checked. Every
+message carries the whole arithmetic (z, percentile, half-life and its
+t-statistic, expected reversion, friction, net) because the recipient is on a
+phone and cannot open a terminal to check it.
+
+Three channels because at least one should be reachable in two minutes.
+Telegram needs a bot registration, a token, a message sent to the bot before it
+will talk back, and a chat id dug out of a `getUpdates` response. ntfy needs a
+topic name and nothing else — no account anywhere. Discord needs one webhook URL
+and posts into a channel rather than a private chat, so more than one person can
+watch. Each trims to its own limit rather than the renderer trimming once, since
+Discord cuts at 2000 characters and Telegram allows 4096, and a shared cap would
+shorten every Telegram alert for no reason.
+
+On the public ntfy server the topic *is* the password: anyone who guesses it
+reads the alerts. Acceptable here, because the alerts are prices, z-scores and
+public instrument names — and `NTFY_SERVER` points at a self-hosted instance for
+when it stops being acceptable.
+
+Credentials are checked at startup with `--verify-alerts`, not at the first
+alert. A bad token is silent until something fires, which may be days away and
+is exactly the moment it needs to work.
+
+Delivery failure never stops detection: alerts are written to the database
+*before* they are sent, configuring no channel at all is the normal case, and
+four real transport failures plus the HTTP-200-with-`ok:false` case are fired at
+the notifiers under test.
 
 `dashboard.py` writes one self-contained HTML file from the database — no
 server, because a dashboard that needs a process running is down exactly when
