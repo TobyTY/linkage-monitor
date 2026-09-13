@@ -37,21 +37,55 @@ indicator("S/R + Liquidity", overlay = true,
 
 // ─── Structure ───────────────────────────────────────────────────────────────
 grpS       = "Structure"
-pivotLen   = input.int(10, "Pivot lookback", minval = 2, maxval = 50, group = grpS,
-     tooltip = "Bars either side a pivot must exceed. Higher = fewer, weightier levels, confirmed later.")
+pivotLen   = input.int(10, "Pivot lookback", minval = 2, maxval = 50, group = grpS, tooltip = "Bars either side a pivot must exceed. Higher = fewer, weightier levels, confirmed later.")
 mergeMult  = input.float(0.5, "Merge levels within (xATR)", minval = 0.05, step = 0.05, group = grpS)
 minTouch   = input.int(2, "Minimum touches to draw", minval = 1, group = grpS)
 maxPerSide = input.int(6, "Max levels per side", minval = 1, maxval = 20, group = grpS)
-maxDistPct = input.float(25.0, "Hide levels further than (% of price)", minval = 1.0, maxval = 100.0, step = 1.0, group = grpS,
-     tooltip = "A pivot from a decade ago is still a real pivot and still worthless. On a long weekly history USDINR prints levels near 8 while it trades near 95 -- mechanically correct, and not a level anyone will trade against. Percent rather than ATR so the bound means the same thing on an ETF and on a currency.")
+maxDistPct = input.float(25.0, "Hide levels further than (% of price)", minval = 1.0, maxval = 100.0, step = 1.0, group = grpS, tooltip = "A pivot from a decade ago is still a real pivot and still worthless. On a long weekly history USDINR prints levels near 8 while it trades near 95. Percent rather than ATR so the bound means the same thing on an ETF and on a currency.")
 
 // ─── Liquidity ───────────────────────────────────────────────────────────────
 grpL      = "Liquidity"
-eqMult    = input.float(0.12, "Equal high/low tolerance (xATR)", minval = 0.01, step = 0.01, group = grpL,
-     tooltip = "Must be well below the merge tolerance, or every level becomes a pool and the distinction is lost.")
+eqMult    = input.float(0.12, "Equal high/low tolerance (xATR)", minval = 0.01, step = 0.01, group = grpL, tooltip = "Must stay well below the merge tolerance, or every level becomes a pool and the distinction is lost.")
 showSwept = input.bool(true, "Keep swept pools (greyed)", group = grpL)
 
 // ─── Appearance ──────────────────────────────────────────────────────────────
+// ─── Sessions ────────────────────────────────────────────────────────────────
+// Sessions are an INTRADAY idea. On a daily or weekly bar the whole session is
+// inside one candle, so shading it colours the entire chart and says nothing.
+// The script hides them above `sessMaxMin` rather than drawing something
+// meaningless.
+//
+// Each session is declared in its OWN exchange timezone, not converted to
+// yours. A session is defined by when its traders are at their desks, and that
+// does not move when you do.
+//
+// Worth noting for this universe specifically: NSE closes 15:30 IST (10:00 UTC)
+// and NYSE opens 09:30 ET (14:30 UTC). They never overlap -- not by a minute.
+// That gap is exactly why every ADR linkage in config/universe.yaml carries an
+// overnight move it cannot see, and why those pairs are observational.
+grpSess    = "Sessions"
+showSess   = input.bool(true, "Shade sessions", group = grpSess)
+sessMaxMin = input.int(240, "Hide above this many minutes per bar", minval = 1, maxval = 1440, group = grpSess)
+showOverlap = input.bool(true, "Highlight London/New York overlap", group = grpSess, tooltip = "The only window where two of the three largest FX centres are open together, and where most of the day's range usually prints.")
+
+sydOn = input.bool(true,  "Sydney",    inline = "syd", group = grpSess)
+sydS  = input.session("0700-1600", "", inline = "syd", group = grpSess)
+tokOn = input.bool(true,  "Tokyo",     inline = "tok", group = grpSess)
+tokS  = input.session("0900-1500", "", inline = "tok", group = grpSess)
+indOn = input.bool(true,  "India NSE", inline = "ind", group = grpSess)
+indS  = input.session("0915-1530", "", inline = "ind", group = grpSess)
+lonOn = input.bool(true,  "London",    inline = "lon", group = grpSess)
+lonS  = input.session("0800-1630", "", inline = "lon", group = grpSess)
+nyOn  = input.bool(true,  "New York",  inline = "ny",  group = grpSess)
+nyS   = input.session("0930-1600", "", inline = "ny", group = grpSess)
+
+sydCol = input.color(color.new(#8b949e, 88), "Sydney",   inline = "sc", group = grpSess)
+tokCol = input.color(color.new(#a371f7, 88), "Tokyo",    inline = "sc", group = grpSess)
+indCol = input.color(color.new(#f778ba, 88), "India",    inline = "sc2", group = grpSess)
+lonCol = input.color(color.new(#58a6ff, 88), "London",   inline = "sc2", group = grpSess)
+nyCol  = input.color(color.new(#3fb950, 88), "New York", inline = "sc3", group = grpSess)
+ovCol  = input.color(color.new(#d29922, 80), "Overlap",  inline = "sc3", group = grpSess)
+
 grpA       = "Appearance"
 resCol     = input.color(color.new(#f85149, 0),  "Resistance", group = grpA)
 supCol     = input.color(color.new(#3fb950, 0),  "Support",    group = grpA)
@@ -177,6 +211,28 @@ drawSide(array<float> px, array<int> n, array<int> bars, array<float> lo, array<
                              textcolor = shade,
                              size      = size.tiny)
                         array.push(drawnLabels, lb)
+
+// A session is "on" when time() returns non-na for that session string in that
+// session's own timezone.
+inSess(string sess, string tz) =>
+    not na(time(timeframe.period, sess, tz))
+
+sessOK = showSess and timeframe.isintraday and timeframe.in_seconds() <= sessMaxMin * 60
+
+inSyd = sessOK and sydOn and inSess(sydS, "Australia/Sydney")
+inTok = sessOK and tokOn and inSess(tokS, "Asia/Tokyo")
+inInd = sessOK and indOn and inSess(indS, "Asia/Kolkata")
+inLon = sessOK and lonOn and inSess(lonS, "Europe/London")
+inNy  = sessOK and nyOn  and inSess(nyS,  "America/New_York")
+inOv  = sessOK and showOverlap and inLon and inNy
+
+// Painted least-important first so the overlap sits on top of both its parents.
+bgcolor(inSyd ? sydCol : na, title = "Sydney session")
+bgcolor(inTok ? tokCol : na, title = "Tokyo session")
+bgcolor(inInd ? indCol : na, title = "India session")
+bgcolor(inLon ? lonCol : na, title = "London session")
+bgcolor(inNy  ? nyCol  : na, title = "New York session")
+bgcolor(inOv  ? ovCol  : na, title = "London/NY overlap")
 
 if barstate.islast
     clearDrawings()
