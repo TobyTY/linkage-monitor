@@ -20,7 +20,9 @@ from linkage.kalman import KalmanStep
 from linkage.notify import (
     MAX_MESSAGE_CHARS,
     ConsoleNotifier,
+    DiscordNotifier,
     MultiNotifier,
+    NtfyNotifier,
     TelegramNotifier,
     build,
     render,
@@ -269,3 +271,126 @@ def test_verify_reports_an_unreachable_api_without_raising(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
     assert "unreachable" in TelegramNotifier(token="T", chat_id="1").verify()
+
+
+# ---------------------------------------------------------------------------
+# ntfy and Discord: the channels that exist so Telegram is not a dependency.
+
+
+def test_ntfy_posts_the_body_to_the_topic_url(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(request, timeout=None):
+        sent["url"] = request.full_url
+        sent["body"] = request.data.decode()
+        return FakeResponse({})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    notifier = NtfyNotifier(topic="abc123")
+
+    assert notifier.send("GOLDBEES z=2.4")
+    assert sent["url"] == "https://ntfy.sh/abc123"
+    assert sent["body"] == "GOLDBEES z=2.4"
+    assert notifier.sent == 1
+
+
+def test_ntfy_honours_a_self_hosted_server(monkeypatch):
+    """The public server makes the topic the only secret, and a guessable one.
+    A self-hosted server is the answer for anything that should stay private."""
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    monkeypatch.setenv("NTFY_SERVER", "https://ntfy.example.com/")
+    notifier = NtfyNotifier.from_env()
+    assert notifier.server == "https://ntfy.example.com"  # trailing slash dropped
+
+
+@pytest.mark.parametrize(
+    "boom",
+    [
+        urllib.error.URLError("dns is down"),
+        urllib.error.HTTPError("u", 503, "unavailable", {}, BytesIO(b"")),
+        TimeoutError("took too long"),
+    ],
+)
+def test_ntfy_transport_failures_do_not_escape(monkeypatch, boom):
+    def fake_urlopen(request, timeout=None):
+        raise boom
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    notifier = NtfyNotifier(topic="t")
+
+    assert notifier.send("anything") is False
+    assert notifier.failed == 1
+    assert notifier.last_error
+
+
+def test_discord_sends_json_content(monkeypatch):
+    sent = {}
+
+    def fake_urlopen(request, timeout=None):
+        sent["body"] = json.loads(request.data.decode())
+        return FakeResponse({})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    notifier = DiscordNotifier(webhook_url="https://discord.com/api/webhooks/1/x")
+
+    assert notifier.send("hello")
+    assert sent["body"] == {"content": "hello"}
+
+
+def test_discord_truncates_to_its_own_shorter_limit(monkeypatch):
+    """Discord rejects anything past 2000 characters, Telegram allows 4096.
+    Truncating once in the renderer would cut every Telegram alert down to
+    Discord's limit for no reason, so each channel trims its own."""
+    sent = {}
+
+    def fake_urlopen(request, timeout=None):
+        sent["body"] = json.loads(request.data.decode())
+        return FakeResponse({})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    notifier = DiscordNotifier(webhook_url="https://discord.com/api/webhooks/1/x")
+
+    notifier.send("x" * 5000)
+    assert len(sent["body"]["content"]) == notifier.limit
+    assert sent["body"]["content"].endswith("...")
+    assert notifier.limit < MAX_MESSAGE_CHARS
+
+
+@pytest.mark.parametrize(
+    "variable,value,expected",
+    [
+        ("NTFY_TOPIC", "some-topic", NtfyNotifier),
+        ("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1/x", DiscordNotifier),
+    ],
+)
+def test_build_picks_up_each_channel_from_the_environment(
+    monkeypatch, variable, value, expected
+):
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NTFY_TOPIC", "DISCORD_WEBHOOK_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, value)
+
+    targets = build().targets
+    assert any(isinstance(t, expected) for t in targets)
+
+
+def test_several_channels_can_run_at_once(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "T")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setenv("NTFY_TOPIC", "t")
+    monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1/x")
+
+    kinds = {type(t).__name__ for t in build().targets}
+    assert {"ConsoleNotifier", "TelegramNotifier", "NtfyNotifier", "DiscordNotifier"} <= kinds
+
+
+def test_no_channel_configured_still_leaves_the_console(monkeypatch):
+    """Configuring nothing is the normal case, not an error. A monitor that
+    refuses to start without a messaging service has made delivery a dependency
+    of detection."""
+    for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NTFY_TOPIC", "DISCORD_WEBHOOK_URL"):
+        monkeypatch.delenv(name, raising=False)
+
+    targets = build().targets
+    assert len(targets) == 1
+    assert isinstance(targets[0], ConsoleNotifier)

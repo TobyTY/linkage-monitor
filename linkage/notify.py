@@ -213,19 +213,153 @@ class TelegramNotifier:
 
 
 @dataclass
+class NtfyNotifier:
+    """Push to a phone with no account anywhere.
+
+    ntfy.sh needs no signup, no bot and no token: pick a topic name, subscribe
+    to it in the app, and anything POSTed to that topic arrives as a
+    notification. The whole configuration is one string.
+
+    THE TOPIC IS THE ONLY SECRET, and on the public server it is a weak one.
+    Anyone who guesses the topic can read the alerts, and anyone who knows it
+    can post to it. So the topic has to be long and random, and the alerts
+    themselves have to stay non-sensitive -- which they are, being prices,
+    z-scores and public instrument names. Anything genuinely private belongs on
+    a self-hosted server via NTFY_SERVER.
+    """
+
+    topic: str
+    server: str = "https://ntfy.sh"
+    sent: int = 0
+    failed: int = 0
+    last_error: str | None = field(default=None)
+
+    #: ntfy accepts large bodies. Matching the Telegram cap keeps one alert
+    #: reading the same on every channel.
+    limit: int = MAX_MESSAGE_CHARS
+
+    @classmethod
+    def from_env(cls) -> NtfyNotifier | None:
+        topic = os.environ.get("NTFY_TOPIC", "").strip()
+        if not topic:
+            return None
+        server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").strip().rstrip("/")
+        return cls(topic=topic, server=server)
+
+    def send(self, text: str) -> bool:
+        body = text[: self.limit - 3] + "..." if len(text) > self.limit else text
+        request = urllib.request.Request(
+            f"{self.server}/{self.topic}",
+            data=body.encode("utf-8"),
+            headers={"Title": "linkage-monitor", "Tags": "chart_with_upwards_trend"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS):
+                pass
+            self.sent += 1
+            return True
+        except Exception as exc:  # noqa: BLE001
+            return self._failure(f"{type(exc).__name__}: {exc}")
+
+    def _failure(self, message: str) -> bool:
+        self.failed += 1
+        self.last_error = message
+        logger.warning("ntfy send failed: %s", message)
+        return False
+
+    def verify(self) -> str:
+        if self.send("linkage-monitor connected."):
+            return f"{self.server}/{self.topic}, test message delivered"
+        return f"{self.server}/{self.topic} failed: {self.last_error}"
+
+
+@dataclass
+class DiscordNotifier:
+    """Post to a channel through an incoming webhook.
+
+    One URL out of a channel's settings, no bot registration and no approval
+    step. Worth preferring over Telegram when the alerts should be visible to
+    more than one person, since a webhook posts into a channel rather than a
+    private chat.
+
+    THE WEBHOOK URL IS A BEARER CREDENTIAL. Anyone holding it can post to that
+    channel as this integration, so it belongs in .env with everything else and
+    never in a commit.
+    """
+
+    webhook_url: str
+    sent: int = 0
+    failed: int = 0
+    last_error: str | None = field(default=None)
+
+    #: Discord rejects anything past 2000 characters. Lower than the Telegram
+    #: cap, so truncation happens per channel rather than once in the renderer
+    #: -- otherwise every Telegram alert would be cut to Discord's limit for no
+    #: reason.
+    limit: int = 1900
+
+    @classmethod
+    def from_env(cls) -> DiscordNotifier | None:
+        url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+        return cls(webhook_url=url) if url else None
+
+    def send(self, text: str) -> bool:
+        body = text[: self.limit - 3] + "..." if len(text) > self.limit else text
+        request = urllib.request.Request(
+            self.webhook_url,
+            data=json.dumps({"content": body}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS):
+                pass
+            self.sent += 1
+            return True
+        except Exception as exc:  # noqa: BLE001
+            return self._failure(f"{type(exc).__name__}: {exc}")
+
+    def _failure(self, message: str) -> bool:
+        self.failed += 1
+        self.last_error = message
+        logger.warning("discord send failed: %s", message)
+        return False
+
+    def verify(self) -> str:
+        if self.send("linkage-monitor connected."):
+            return "webhook accepted, test message delivered"
+        return f"webhook failed: {self.last_error}"
+
+
+@dataclass
 class MultiNotifier:
     """Send everywhere, report whether anywhere worked."""
 
     targets: list[Notifier] = field(default_factory=list)
 
     def send(self, text: str) -> bool:
+        # Every target is called before the result is computed. The list
+        # comprehension is deliberate: any() over a generator short-circuits,
+        # which would leave the second channel silent whenever the first one
+        # worked.
         return any([target.send(text) for target in self.targets])
 
 
+#: Every off-machine channel, in the order they are tried. Console is handled
+#: separately because it is not optional and cannot fail.
+REMOTE_CHANNELS = (TelegramNotifier, NtfyNotifier, DiscordNotifier)
+
+
 def build(*, console: bool = True) -> Notifier:
-    """Console always; Telegram too when it is configured."""
+    """Console always; every configured remote channel as well.
+
+    Configuring none of them is the normal case rather than an error. The scan
+    runs perfectly well printing to a terminal, and a monitor that refuses to
+    start without a messaging service has made delivery a dependency of
+    detection -- which is the first rule at the top of this file.
+    """
     targets: list[Notifier] = [ConsoleNotifier()] if console else []
-    telegram = TelegramNotifier.from_env()
-    if telegram is not None:
-        targets.append(telegram)
+    for channel in REMOTE_CHANNELS:
+        built = channel.from_env()
+        if built is not None:
+            targets.append(built)
     return MultiNotifier(targets)

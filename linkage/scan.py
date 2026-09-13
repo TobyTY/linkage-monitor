@@ -37,7 +37,7 @@ from linkage.config import LinkageConfig, Universe, load_universe
 from linkage.detector import WARMUP_OBSERVATIONS, LinkageDetector, Verdict
 from linkage.engine import SpreadHistory, evaluate_linkage
 from linkage.events import EventCalendar
-from linkage.notify import Notifier, TelegramNotifier
+from linkage.notify import REMOTE_CHANNELS, Notifier
 from linkage.notify import build as build_notifier
 from linkage.notify import render
 from linkage.providers.base import MarketDataProvider, ProviderError, Quote
@@ -377,9 +377,12 @@ def main() -> None:
         help="alert even when a leg reports inside the horizon (not advised)",
     )
     parser.add_argument(
+        "--verify-alerts",
         "--verify-telegram",
+        dest="verify_alerts",
         action="store_true",
-        help="check the bot token and send a test message before starting",
+        help="check every configured alert channel and send a test message "
+        "before starting",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -397,11 +400,22 @@ def main() -> None:
 
     load_dotenv(PROJECT_ROOT / ".env")
     notifier = build_notifier()
-    telegram = TelegramNotifier.from_env()
-    if telegram is None:
-        print("telegram not configured — alerts go to the console only")
-    elif args.verify_telegram:
-        print(f"telegram: {telegram.verify()}")
+
+    # Checked at startup rather than at the first alert. A bad token is silent
+    # until something fires, which may be days away and is exactly the moment
+    # it needs to work.
+    configured = [(c.__name__, c.from_env()) for c in REMOTE_CHANNELS]
+    live = [(name, built) for name, built in configured if built is not None]
+    if not live:
+        print(
+            "no alert channel configured — alerts go to the console only.\n"
+            "  Set one of NTFY_TOPIC, DISCORD_WEBHOOK_URL, or "
+            "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in .env."
+        )
+    else:
+        for name, built in live:
+            label = name.replace("Notifier", "").lower()
+            print(f"{label}: {built.verify() if args.verify_alerts else 'configured'}")
     print()
 
     store = open_store(args.db, disabled=args.no_db)
