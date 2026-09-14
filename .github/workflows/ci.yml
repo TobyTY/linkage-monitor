@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The suite touches no network and no Postgres: persistence tests run on
+      # an in-memory SQLite, and the event study builds its own prices. That is
+      # a property worth keeping, so CI runs with nothing available -- if a test
+      # ever starts reaching for yfinance, it fails here rather than becoming a
+      # suite that passes only when a market data vendor is up.
+      - name: Test
+        run: pytest -q
+
+      # The config is the universe. A typo in a formula, a leg, or a friction
+      # figure is a silently different quantity rather than a crash, so loading
+      # and validating it is its own step.
+      - name: The universe loads and validates
+        run: |
+          python - <<'PY'
+          from linkage.config import load_universe
+          u = load_universe("config/universe.yaml")
+          linkages = u.linkages if hasattr(u, "linkages") else u
+          print(f"{len(linkages)} linkages, "
+                f"{len({l.symbol for k in linkages for l in k.legs.values()})} distinct symbols")
+          assert len(linkages) >= 15, "universe shrank unexpectedly"
+          for k in linkages:
+              if k.category.value == "validation":
+                  # A triangular identity is not a trade. Friction on one means
+                  # it has been miscategorised, and its net edge would then be
+                  # read as a profit estimate for something nobody can execute.
+                  assert k.total_friction_bps == 0, f"{k.id} is validation but carries friction"
+              else:
+                  assert k.total_friction_bps > 0, f"{k.id} has no friction"
+          PY
+
+      # The formula evaluator is an AST whitelist standing between a config file
+      # and exec(). It gets its own gate because the cost of it regressing is
+      # not a wrong number, it is arbitrary code execution from a YAML edit.
+      - name: The formula sandbox still refuses escapes
+        run: pytest -q tests/test_formula.py -x
+
+      # Every published figure in the README is reproducible from this repo, so
+      # the scripts that produce them have to keep running. --once --no-db does
+      # a full scan cycle without writing anything; on a closed market every leg
+      # reports stale, which is a correct outcome rather than a failure.
+      - name: A scan cycle completes without a database
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m linkage.scan --once --no-db
