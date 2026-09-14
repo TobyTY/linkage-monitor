@@ -8,10 +8,25 @@ This answers the only question that matters about an alerting system: were the
 alerts any good? Watching it live for a month gives you three alerts and no
 statistics. Replaying five years gives you a sample.
 
-Two things make this a backtest rather than a demonstration:
+WHAT THIS ACTUALLY REPLAYS, WHICH IS NOT THE WHOLE DETECTOR.
 
-NOTHING USES DATA IT WOULD NOT HAVE HAD. The Kalman filter is causal by
-construction -- it only ever sees the past. The OU fit and the threshold are
+The live detector composes three things: the Kalman's normalised innovation,
+the empirical percentile, and the OU horizon gate. This backtest replays the
+second and third. It does not construct a KalmanHedge at all -- the z printed
+below is a percentile score, not a filter innovation.
+
+That is a real limit on what the numbers downstream can claim. "The alerting
+rule beats a random entry" is a statement about the threshold and the gate; it
+is not evidence about the filter, and the filter is the component most likely
+to be wrong, because it carries state across every observation while the other
+two are recomputed from a window each step. It was in fact wrong -- see the
+scale-invariance finding in the README -- and nothing in this file could have
+caught it. The validation linkages did.
+
+Replaying the Kalman here would mean persisting and restoring filter state
+across the walk-forward, which is worth doing and is not done yet.
+
+NOTHING USES DATA IT WOULD NOT HAVE HAD. The OU fit and the threshold are
 recomputed on a TRAILING window at every step, never once on the full sample.
 Fitting the half-life on all five years and then "testing" on those same five
 years is the most common way a pairs backtest lies, and it lies in the

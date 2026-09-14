@@ -170,6 +170,24 @@ scores against what a pair actually does, so an under-dispersed z still produced
 sensible percentiles. That is the layer earning its place, not an excuse for the
 layer beneath it.
 
+**The backtest does not replay the whole detector, and that bounds every number
+above it.** The live detector composes three things — the Kalman's normalised
+innovation, the empirical percentile, and the OU horizon gate. `backtest.py`
+replays the second and third. It never constructs a `KalmanHedge`; the z in its
+output is a percentile score, not a filter innovation.
+
+So "the alerting rule beats a random entry" is a claim about the threshold and
+the gate. It is not evidence about the filter — and the filter is the component
+most likely to be wrong, because it carries state across every observation while
+the other two are recomputed from a trailing window each step. It *was* wrong,
+for as long as this repo has existed, and nothing in the backtest could have
+found it. The validation linkages did.
+
+Replaying the Kalman across a walk-forward means persisting and restoring filter
+state at each step. That is worth doing and is not done yet, and until it is,
+the backtest numbers and the filter are two separate pieces of evidence rather
+than one.
+
 **The reversion test was admitting 29% of random walks.** `MIN_THETA_TSTAT` was
 2.0, which is what a t-table gives for 5% significance. But the fit — the change
 in the spread regressed on its own lagged level, with a constant — *is* the
@@ -241,7 +259,7 @@ Two details do real work:
   ADR ratio changes, an ETF's units-per-gram drifts — β moves and the filter
   absorbs it, so staleness appears as visible drift instead of a permanent fake
   arbitrage that alerts forever.
-- θ must be statistically separable from zero (`MIN_THETA_TSTAT = 2.0`). Fitting
+- θ must be statistically separable from zero (`MIN_THETA_TSTAT = 2.86`). Fitting
   AR(1) to a pure random walk returns a small positive θ nearly every time,
   which then reads as a 600-day half-life and a slow but real relationship. It
   is neither. Adding this check moved two pairs in this repo from "cointegrated,
