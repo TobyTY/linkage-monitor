@@ -114,3 +114,66 @@ def test_symbols_are_deduplicated_across_linkages():
 
     assert len(symbols) == 5  # 6 legs, but USDINR is shared
     assert "FX_IDC:USDINR" in symbols
+
+
+def test_validation_linkages_declare_a_tight_kalman_prior():
+    """A triangular identity's beta cannot drift, so its prior must not allow it.
+
+    This is not tidiness. The validation lane exists so that an engine bug
+    surfaces where the answer is known in advance, and a permissive prior lets
+    beta wander a few percent on its own -- which looks, on the dashboard,
+    exactly like the bug it is meant to reveal. Measured on AUDINR, whose true
+    ratio is 0.99801: the general prior of 1e-7 lands at 0.9603 (3.97% drift),
+    a tight 1e-10 lands at 0.9979 (0.21%).
+    """
+    from pathlib import Path
+
+    from linkage.config import Category, load_universe
+
+    universe = load_universe(Path(__file__).resolve().parent.parent / "config" / "universe.yaml")
+    validation = [k for k in universe.linkages if k.category is Category.VALIDATION]
+    assert validation, "the universe lost its validation lane"
+
+    for linkage in validation:
+        assert linkage.kalman_delta is not None, (
+            f"{linkage.id} is a mathematical identity but inherits the general "
+            f"drift prior, so its beta is free to wander"
+        )
+        assert linkage.kalman_delta <= 1e-9, f"{linkage.id}'s prior is too loose for an identity"
+
+
+def test_non_validation_linkages_keep_the_general_prior():
+    """The converse. An ADR ratio moves on corporate actions and an index
+    tracker's units drift with rebalancing, so pinning those would tell the
+    filter it knows something it does not."""
+    from pathlib import Path
+
+    from linkage.config import Category, load_universe
+
+    universe = load_universe(Path(__file__).resolve().parent.parent / "config" / "universe.yaml")
+    for linkage in universe.linkages:
+        if linkage.category is not Category.VALIDATION:
+            assert linkage.kalman_delta is None, (
+                f"{linkage.id} pins its hedge ratio, but only an identity may"
+            )
+
+
+def test_the_prior_reaches_the_detector():
+    """The factory exists because the override used to be ignored.
+
+    delta was defined twice -- as the default in kalman.py and again as a
+    hardcoded 1e-5 on LinkageDetector -- so correcting the default changed
+    nothing on the live path. The bug survived its own fix.
+    """
+    from pathlib import Path
+
+    from linkage.config import Category, load_universe
+    from linkage.detector import LinkageDetector
+
+    universe = load_universe(Path(__file__).resolve().parent.parent / "config" / "universe.yaml")
+    for linkage in universe.linkages:
+        detector = LinkageDetector.for_linkage(linkage)
+        if linkage.kalman_delta is not None:
+            assert detector.kalman.delta == linkage.kalman_delta, (
+                f"{linkage.id} declares a prior the detector did not pick up"
+            )

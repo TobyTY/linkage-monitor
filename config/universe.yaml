@@ -126,6 +126,7 @@ linkages:
 
   - id: eurinr_triangular
     category: validation
+    kalman_delta: 1.0e-10   # identity: beta cannot drift, so the prior must not let it
     description: EURINR against USDINR x EURUSD. Exact identity.
     legs:
       cross:  { symbol: "EURINR=X", provider: yfinance }
@@ -138,6 +139,7 @@ linkages:
 
   - id: gbpinr_triangular
     category: validation
+    kalman_delta: 1.0e-10   # identity: beta cannot drift, so the prior must not let it
     description: GBPINR against USDINR x GBPUSD. Exact identity.
     legs:
       cross:  { symbol: "GBPINR=X", provider: yfinance }
@@ -150,6 +152,7 @@ linkages:
 
   - id: audinr_triangular
     category: validation
+    kalman_delta: 1.0e-10   # identity: beta cannot drift, so the prior must not let it
     description: AUDINR against USDINR x AUDUSD. Exact identity.
     legs:
       cross:  { symbol: "AUDINR=X", provider: yfinance }
@@ -162,6 +165,7 @@ linkages:
 
   - id: jpyinr_triangular
     category: validation
+    kalman_delta: 1.0e-10   # identity: beta cannot drift, so the prior must not let it
     description: >
       JPYINR against USDINR / USDJPY. The inverted leg -- included precisely
       because it is the one a sign error would slip through.

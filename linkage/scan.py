@@ -149,7 +149,7 @@ def warm_detectors(
                 by_date.setdefault(bar.ts.date(), {})[name] = bar.close
 
         complete = [d for d, legs in sorted(by_date.items()) if len(legs) == len(linkage.legs)]
-        detector = detectors.setdefault(linkage.id, LinkageDetector(linkage.id))
+        detector = detectors.setdefault(linkage.id, LinkageDetector.for_linkage(linkage))
         history = histories.setdefault(linkage.id, SpreadHistory())
 
         for day in complete:
@@ -248,7 +248,7 @@ def scan_once(
             continue
 
         history = histories.setdefault(linkage.id, SpreadHistory())
-        detector = detectors.setdefault(linkage.id, LinkageDetector(linkage.id))
+        detector = detectors.setdefault(linkage.id, LinkageDetector.for_linkage(linkage))
 
         observation = evaluate_linkage(
             linkage, quotes, history, now=now, max_age_seconds=max_age_seconds

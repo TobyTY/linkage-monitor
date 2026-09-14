@@ -78,6 +78,23 @@ class LinkageConfig(BaseModel):
     friction_bps: dict[str, float] = Field(default_factory=dict)
     alert: AlertConfig
 
+    #: How fast this relationship's hedge ratio is believed to drift, as the
+    #: Kalman's delta. None means the filter's own default.
+    #:
+    #: This is per-linkage because the honest prior genuinely differs. An ADR
+    #: ratio moves on corporate actions and an index tracker's units drift with
+    #: rebalancing, so beta there really can wander. A triangular FX identity
+    #: cannot: INR/X is USDINR times USD/X by construction, and no amount of
+    #: market activity changes that arithmetic. Handing both the same prior
+    #: tells the filter it does not know something it does know.
+    #:
+    #: It matters for the diagnostic, not just for tidiness. The validation
+    #: lane exists so an engine bug shows up where the answer is known in
+    #: advance, and a permissive prior lets beta wander a few percent on its
+    #: own -- which is indistinguishable, to a reader of the dashboard, from
+    #: the bug it is supposed to reveal.
+    kalman_delta: float | None = None
+
     @field_validator("legs")
     @classmethod
     def _at_least_two_legs(cls, legs: dict[str, LegConfig]) -> dict[str, LegConfig]:
@@ -141,6 +158,11 @@ class LinkageConfig(BaseModel):
                 "fair_value": self.fair_value,
                 "params": dict(sorted(self.params.items())),
                 "reference": self.reference,
+                # In the fingerprint because it shapes the state that
+                # accumulates, which is the stated test for inclusion --
+                # unlike friction and the alert thresholds, which are applied
+                # fresh to every verdict and so are deliberately left out.
+                "kalman_delta": self.kalman_delta,
             },
             sort_keys=True,
             separators=(",", ":"),

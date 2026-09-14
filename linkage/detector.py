@@ -100,7 +100,12 @@ class LinkageDetector:
     """Per-linkage detector state. One of these lives per linkage, forever."""
 
     linkage_id: str
-    kalman: KalmanHedge = field(default_factory=lambda: KalmanHedge(delta=1e-5))
+    # No delta override here. It used to say delta=1e-5, which meant the prior
+    # was defined in two places: once as the default in kalman.py and once
+    # here, silently winning. Correcting the default alone then changed
+    # nothing on the live path -- the bug survived its own fix, which is the
+    # argument for there being exactly one definition.
+    kalman: KalmanHedge = field(default_factory=KalmanHedge)
     threshold: EmpiricalThreshold = field(default_factory=EmpiricalThreshold)
     spread_history: list[float] = field(default_factory=list)
     seen: int = 0
@@ -241,6 +246,21 @@ class LinkageDetector:
             "threshold": self.threshold.snapshot(),
             "spread_history": list(self.spread_history),
         }
+
+    @classmethod
+    def for_linkage(cls, linkage: LinkageConfig) -> LinkageDetector:
+        """A fresh detector carrying this linkage's own prior.
+
+        Constructing detectors through here rather than calling the dataclass
+        directly is what keeps `kalman_delta` from being silently ignored at
+        one of the two call sites.
+        """
+        kalman = (
+            KalmanHedge(delta=linkage.kalman_delta)
+            if linkage.kalman_delta is not None
+            else KalmanHedge()
+        )
+        return cls(linkage_id=linkage.id, kalman=kalman)
 
     @classmethod
     def restore(cls, snapshot: dict) -> LinkageDetector:
