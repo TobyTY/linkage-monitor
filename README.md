@@ -117,6 +117,59 @@ observation. `find_stale_prints` is the response — an exact repeat of the
 previous close on a day another leg moved more than 0.5%. The numbers in the
 table above are all post-screen.
 
+**The Kalman filter was answering a question about units.** The validation lane
+exists so that an engine bug shows up somewhere the answer is known in advance,
+and it did. The dashboard reported beta drift of 5.63% on `audinr_triangular`,
+3.14% on `eurinr` and 2.54% on `jpyinr` — linkages whose beta is **1 by
+construction**, because a triangular FX identity cannot have any other hedge
+ratio. Fitted directly on two years of closes, the true ratio is 0.99801. The
+filter was wrong, not the data.
+
+`Q` is a prior on how far the slope moves per step and `R` a prior on
+observation noise, and both are *absolute* variances. But the slope's
+contribution to the predicted variance is `x² · P[0,0]`, so the same `delta`
+means something entirely different at x = 0.6 than at x = 56,000 — and this
+universe spans both, JPYINR quoting at 0.62 and BANKNIFTY at 56,606. Multiplying
+**both** legs of the AUDINR identity by a constant, which cannot change a ratio:
+
+| both legs scaled by | beta (true 0.998) | z sd | \|z\| > 2 |
+|---|---|---|---|
+| ×0.01 | 0.783 | 0.08 | **never fired** |
+| ×1 | 0.962 | 0.64 | 1.9% |
+| ×100 | 1.003 | 0.66 | 2.2% |
+
+The low end is the dangerous end. A detector that silently stops firing is
+indistinguishable from a market with nothing to report, and JPYINR lives there.
+Both legs are now divided by a scale fixed at the first observation; beta is
+invariant under a common scaling, and z is too, because innovation scales with
+*s* while S scales with *s²*.
+
+**Normalising then exposed that neither prior had ever been measured.** `delta`
+was 1e-4 — a per-step slope standard deviation of 0.01, compounding to a ±22%
+random walk over 500 observations. Beta was absorbing the spread instead of
+reporting it, and z collapsed to sd 0.42, so the detector fired at roughly a
+fifth of its nominal rate:
+
+| delta | beta | z sd | \|z\| > 2 |
+|---|---|---|---|
+| 1e-4 *(old)* | 0.816 | 0.42 | 1.0% |
+| 1e-6 | 0.911 | 1.06 | 5.8% |
+| **1e-7** *(now)* | 0.976 | 1.14 | 6.5% |
+| 1e-8 | 0.997 | 1.17 | 6.7% |
+
+`delta` is now 1e-7 and is still a *stated* prior rather than a fit: a per-step
+sd of 3.2e-4, so a hedge ratio may drift about half a percent over a trading
+year. 1e-8 fits this particular identity better precisely because its beta is
+constant — and choosing it for that reason would be tuning on the answer, which
+is the thing this file keeps refusing to do.
+
+Every stored detector state was fitted by the broken filter, so `STATE_VERSION`
+is bumped to 2 and all fifteen are discarded on the next scan rather than
+resumed. The empirical threshold had been quietly absorbing some of this: it
+scores against what a pair actually does, so an under-dispersed z still produced
+sensible percentiles. That is the layer earning its place, not an excuse for the
+layer beneath it.
+
 **The reversion test was admitting 29% of random walks.** `MIN_THETA_TSTAT` was
 2.0, which is what a t-table gives for 5% significance. But the fit — the change
 in the spread regressed on its own lagged level, with a constant — *is* the

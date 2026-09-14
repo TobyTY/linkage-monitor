@@ -40,7 +40,15 @@ WARMUP_OBSERVATIONS = 120
 #: Shape of the persisted snapshot. Bumped whenever a field is added, removed
 #: or reinterpreted, so that a restore across an upgrade refuses rather than
 #: quietly loading a state that means something else now.
-STATE_VERSION = 1
+#:
+#: 2: the Kalman filter now runs on a normalised scale, and its priors changed
+#:    with it (delta 1e-4 -> 1e-7, observation_var 1e-3 -> 1e-5 in units of the
+#:    first observation). Every version-1 snapshot holds a state fitted in raw
+#:    price units by a filter that was not scale-invariant, so its beta is wrong
+#:    and its intercept is not even in the same units the filter now uses.
+#:    Resuming one would carry the bug forward silently, which is the exact
+#:    failure this constant exists to prevent.
+STATE_VERSION = 2
 
 #: Trailing window the OU process is refitted on. Never the full history: a
 #: half-life fitted on data that includes the future is not a half-life.
