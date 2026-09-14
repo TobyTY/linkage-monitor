@@ -27,6 +27,33 @@ Q is set by `delta`, the standard parameterisation: Q = delta/(1-delta) * I.
 Small delta means beta is believed to move slowly. It is the one real knob here,
 and it is a prior about how fast the relationship drifts, not a fitted value --
 so it should be stated, not tuned until the backtest looks good.
+
+THE FILTER RUNS ON A NORMALISED SCALE, AND IT HAS TO.
+
+Q and R are absolute variances. Q is a prior on how far the SLOPE moves per
+step; R is a prior on observation noise in PRICE units. But the slope's
+contribution to the predicted variance S is x^2 * P[0,0], so the same delta
+means something completely different at x = 0.6 than at x = 56,000 -- and this
+universe spans both (JPYINR at 0.62, BANKNIFTY at 56,606).
+
+Measured, before this was fixed: the same AUDINR/USDINR*AUDUSD identity, whose
+true beta is 0.998 at every scale because multiplying both legs cannot change a
+ratio, came back as
+
+    both legs x0.01   ->  beta 0.783,  z sd 0.08,  |z| > 2 never fired
+    both legs x1      ->  beta 0.962,  z sd 0.64
+    both legs x100    ->  beta 1.003,  z sd 0.66
+
+The filter was answering a question about units. At the low end it was also
+effectively muted, which is the dangerous direction: a detector that silently
+stops firing looks exactly like a market with nothing to report.
+
+So both legs are divided by a scale fixed at the first observation. Beta is
+invariant under a common scaling, so it is reported unchanged; prediction,
+innovation and S are scaled back to price units on the way out, which leaves
+z untouched because z = innovation / sqrt(S) and innovation ~ s while S ~ s^2.
+The model is the same model -- it is just no longer expressed in whatever units
+the instrument happens to quote in.
 """
 
 from __future__ import annotations
@@ -66,47 +93,77 @@ class KalmanHedge:
     def __init__(
         self,
         *,
-        delta: float = 1e-4,
-        observation_var: float = 1e-3,
+        delta: float = 1e-7,
+        observation_var: float = 1e-5,
         initial_beta: float = 1.0,
         initial_var: float = 1.0,
     ) -> None:
         if not 0 < delta < 1:
             raise ValueError("delta must sit in (0, 1)")
+        # delta is a PRIOR, stated rather than fitted: 1e-7 gives the slope a
+        # per-step standard deviation of ~3.2e-4, so a hedge ratio can drift
+        # about half a percent over a trading year. That is a sentence about
+        # how fast these relationships actually change -- ADR ratios move on
+        # corporate actions, index weights on rebalances -- not a number chosen
+        # because it made a backtest look better.
+        #
+        # The previous default of 1e-4 allowed a per-step sd of 0.01, which
+        # compounds to a +/-22% random walk over 500 observations. Measured on
+        # the AUDINR triangular identity, whose beta is provably 0.998: the
+        # filter returned 0.816 and z collapsed to sd 0.42, so the detector
+        # quietly under-fired. Beta was absorbing the spread instead of
+        # reporting it.
         self.delta = delta
+        # In units of the first observation, because the filter normalises.
+        # 1e-5 is a variance, so an observation-noise prior of ~32 bps, which
+        # is the order of the residual on the computable linkages (19-46 bps).
         self.R = observation_var
         # Q scales the state noise. delta -> 0 means a nearly-static beta.
         self.Q = np.eye(2) * (delta / (1 - delta))
         self.state = np.array([initial_beta, 0.0], dtype=float)
         self.P = np.eye(2) * initial_var
         self.steps = 0
+        # Fixed on the first observation and never revised. A scale that moved
+        # with the data would make Q and R mean something different from one
+        # step to the next, which is the problem being solved, not a refinement
+        # of it.
+        self.scale: float | None = None
 
     def update(self, y: float, x: float) -> KalmanStep:
         """Advance one observation. y is the reference leg, x the other."""
-        H = np.array([x, 1.0], dtype=float)
+        if self.scale is None:
+            # abs() because a spread leg can legitimately be negative; the
+            # fallback to 1.0 keeps a first observation of exactly zero from
+            # dividing everything by nothing.
+            self.scale = float(abs(y)) or float(abs(x)) or 1.0
+
+        s = self.scale
+        yn, xn = y / s, x / s
+        H = np.array([xn, 1.0], dtype=float)
 
         # Predict: beta random-walks, so the state is unchanged and only the
         # covariance grows.
         P_pred = self.P + self.Q
 
-        prediction = float(H @ self.state)
-        S = float(H @ P_pred @ H.T + self.R)
-        innovation = float(y - prediction)
+        prediction_n = float(H @ self.state)
+        S_n = float(H @ P_pred @ H.T + self.R)
+        innovation_n = float(yn - prediction_n)
 
         # Update
-        K = (P_pred @ H.T) / S
-        self.state = self.state + K * innovation
+        K = (P_pred @ H.T) / S_n
+        self.state = self.state + K * innovation_n
         self.P = P_pred - np.outer(K, H @ P_pred)
         self.steps += 1
 
+        # Back to price units on the way out. beta and z are already scale-free.
         return KalmanStep(
             beta=float(self.state[0]),
-            intercept=float(self.state[1]),
+            intercept=float(self.state[1]) * s,
             beta_var=float(self.P[0, 0]),
-            prediction=prediction,
-            innovation=innovation,
-            innovation_var=S,
-            z=innovation / np.sqrt(S) if S > 0 else 0.0,
+            prediction=prediction_n * s,
+            innovation=innovation_n * s,
+            innovation_var=S_n * s * s,
+            z=innovation_n / np.sqrt(S_n) if S_n > 0 else 0.0,
         )
 
     def warmup(self, ys: list[float], xs: list[float]) -> None:
@@ -135,6 +192,7 @@ class KalmanHedge:
             "state": self.state.tolist(),
             "P": self.P.tolist(),
             "steps": self.steps,
+            "scale": self.scale,
         }
 
     @classmethod
@@ -143,4 +201,11 @@ class KalmanHedge:
         filt.state = np.array(snapshot["state"], dtype=float)
         filt.P = np.array(snapshot["P"], dtype=float)
         filt.steps = int(snapshot["steps"])
+        # Absent in snapshots written before the filter was normalised. Those
+        # states were fitted in raw price units, so resuming one would carry the
+        # scale bug forward; leaving scale as None makes the next observation
+        # set it, and the fingerprint check discards genuinely stale state
+        # anyway.
+        scale = snapshot.get("scale")
+        filt.scale = float(scale) if scale else None
         return filt

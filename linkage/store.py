@@ -40,6 +40,8 @@ idempotent and the cost of being wrong is a re-warm.
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -133,6 +135,24 @@ def _utc(value: datetime | None) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _select_driver() -> str:
+    """psycopg unless it cannot be imported, and say so when it cannot."""
+    forced = os.environ.get("LINKAGE_DRIVER", "").strip().lower()
+    if forced in ("psycopg", "pg8000"):
+        return forced
+
+    try:
+        import psycopg  # noqa: F401
+    except Exception:
+        print(
+            "WARNING: psycopg could not be imported, falling back to pg8000. "
+            "That is slower and is not what CI runs.",
+            file=sys.stderr,
+        )
+        return "pg8000"
+    return "psycopg"
+
+
 class StateStore:
     """Reads and writes detector state. One per process."""
 
@@ -143,9 +163,28 @@ class StateStore:
     def connect(cls, url: str, *, echo: bool = False) -> StateStore:
         # psycopg3, matching the ledger. SQLAlchemy defaults to psycopg2 for a
         # bare postgresql:// URL, which is not installed.
+        #
+        # pg8000 is a fallback for one specific failure: a machine security
+        # policy that deletes the libpq DLLs psycopg ships, which makes psycopg
+        # unimportable and is not fixable from Python. It is pure Python and so
+        # cannot be blocked that way. Set LINKAGE_DRIVER=pg8000 to force it;
+        # otherwise it is chosen only when psycopg genuinely will not import,
+        # and that choice is announced rather than made quietly.
+        #
+        # Nothing in this module depends on driver-specific error shapes -- the
+        # ledger's SQLSTATE handling does, and that is why it reads the code
+        # three different ways -- so the swap is safe here.
+        driver = _select_driver()
+        connect_args: dict = {}
         if url.startswith("postgresql://"):
-            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-        store = cls(create_engine(url, echo=echo, future=True))
+            url = url.replace("postgresql://", f"postgresql+{driver}://", 1)
+        if driver == "pg8000" and url.startswith("postgresql+pg8000://"):
+            # pg8000 does not understand sslmode in the query string and raises
+            # on it. Neon requires TLS, so it is translated rather than dropped.
+            if "sslmode" in url:
+                connect_args = {"ssl_context": True}
+            url = url.split("?")[0]
+        store = cls(create_engine(url, echo=echo, future=True, connect_args=connect_args))
         store.create_schema()
         return store
 
